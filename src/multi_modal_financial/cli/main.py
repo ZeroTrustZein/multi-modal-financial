@@ -31,12 +31,34 @@ def info():
     table.add_column("Implementation", style="green")
     table.add_column("Description", style="white")
 
-    table.add_row("Parser", "FinancialDocumentParser", "Extracts text, markdown tables, and figures from PDFs/text")
-    table.add_row("Sparse Index", "BM25 Okapi", "Financial-tuned tokenization preserving tickers, currencies, %")
-    table.add_row("Dense Index", "DenseVectorIndex", "Deterministic projection / embedding cosine similarity search")
-    table.add_row("Fusion", "HybridRetriever", "Reciprocal Rank Fusion (RRF) & convex alpha score blending")
-    table.add_row("Reranker", "FinancialReranker", "Financial term overlap, number matching, and table weighting")
-    table.add_row("Grounding", "GroundingVerifier", "Numerical verification, claim attribution, and citation checks")
+    table.add_row(
+        "Parser",
+        "FinancialDocumentParser",
+        "Extracts text, markdown tables, and figures from PDFs/text",
+    )
+    table.add_row(
+        "Sparse Index",
+        "BM25 Okapi",
+        "Financial-tuned tokenization preserving tickers, currencies, %",
+    )
+    table.add_row(
+        "Dense Index",
+        "DenseVectorIndex",
+        "Deterministic projection / embedding cosine similarity search",
+    )
+    table.add_row(
+        "Fusion", "HybridRetriever", "Reciprocal Rank Fusion (RRF) & convex alpha score blending"
+    )
+    table.add_row(
+        "Reranker",
+        "FinancialReranker",
+        "Financial term overlap, number matching, and table weighting",
+    )
+    table.add_row(
+        "Grounding",
+        "GroundingVerifier",
+        "Numerical verification, claim attribution, and citation checks",
+    )
 
     console.print(table)
 
@@ -55,10 +77,14 @@ def ingest(file_path: str, ticker: str | None):
             if f.suffix.lower() in [".txt", ".md", ".pdf"]:
                 pipeline.ingest_file(f, ticker=ticker)
                 count += 1
-        console.print(f"[bold green]Successfully ingested {count} documents from {file_path}[/bold green]")
+        console.print(
+            f"[bold green]Successfully ingested {count} documents from {file_path}[/bold green]"
+        )
     else:
         doc = pipeline.ingest_file(path, ticker=ticker)
-        console.print(f"[bold green]Ingested '{doc.doc_id}' with {len(doc.chunks)} chunks.[/bold green]")
+        console.print(
+            f"[bold green]Ingested '{doc.doc_id}' with {len(doc.chunks)} chunks.[/bold green]"
+        )
 
 
 @cli.command()
@@ -117,11 +143,31 @@ def benchmark():
 
     # Ingest synthetic benchmark corpus
     docs = [
-        ("doc_rev", "Apple reported quarterly revenue of $94.9 billion, up 6 percent year-over-year.", "AAPL"),
-        ("doc_margin", "Services gross margin reached 74.0 percent, an all-time record for the segment.", "AAPL"),
-        ("doc_msft_cloud", "Microsoft Cloud revenue exceeded $38.9 billion, driven by Azure AI expansion.", "MSFT"),
-        ("doc_nvda_dc", "NVIDIA Data Center revenue was $30.8 billion, representing 112 percent growth YoY.", "NVDA"),
-        ("doc_cf", "Cash generated from operating activities totaled $26.8 billion for the quarter.", "AAPL"),
+        (
+            "doc_rev",
+            "Apple reported quarterly revenue of $94.9 billion, up 6 percent year-over-year.",
+            "AAPL",
+        ),
+        (
+            "doc_margin",
+            "Services gross margin reached 74.0 percent, an all-time record for the segment.",
+            "AAPL",
+        ),
+        (
+            "doc_msft_cloud",
+            "Microsoft Cloud revenue exceeded $38.9 billion, driven by Azure AI expansion.",
+            "MSFT",
+        ),
+        (
+            "doc_nvda_dc",
+            "NVIDIA Data Center revenue was $30.8 billion, representing 112 percent growth YoY.",
+            "NVDA",
+        ),
+        (
+            "doc_cf",
+            "Cash generated from operating activities totaled $26.8 billion for the quarter.",
+            "AAPL",
+        ),
     ]
     for did, txt, tkr in docs:
         pipeline.ingest_text(txt, doc_id=did, ticker=tkr)
@@ -143,7 +189,9 @@ def benchmark():
     bm25_correct = 0
     mrr_bm25 = 0.0
     for q, target in test_queries:
-        res = pipeline.retriever.retrieve(AgentQuery(query_str=q, top_k=3, alpha=0.0), use_rrf=False)
+        res = pipeline.retriever.retrieve(
+            AgentQuery(query_str=q, top_k=3, alpha=0.0), use_rrf=False
+        )
         rank = next((i + 1 for i, item in enumerate(res) if item.chunk.doc_id == target), 0)
         if rank == 1:
             bm25_correct += 1
@@ -155,15 +203,23 @@ def benchmark():
     mrr_hybrid = 0.0
     for q, target in test_queries:
         res = pipeline.query(q, top_k=3)
-        rank = next((i + 1 for i, item in enumerate(res.retrieved_chunks) if item.chunk.doc_id == target), 0)
+        rank = next(
+            (i + 1 for i, item in enumerate(res.retrieved_chunks) if item.chunk.doc_id == target), 0
+        )
         if rank == 1:
             hybrid_correct += 1
         if rank > 0:
             mrr_hybrid += 1.0 / rank
 
     total = len(test_queries)
-    table.add_row("BM25 (Sparse)", f"{(bm25_correct/total)*100:.1f}%", f"{mrr_bm25/total:.3f}")
-    table.add_row("Hybrid RRF + Reranker", f"{(hybrid_correct/total)*100:.1f}%", f"{mrr_hybrid/total:.3f}")
+    table.add_row(
+        "BM25 (Sparse)", f"{(bm25_correct / total) * 100:.1f}%", f"{mrr_bm25 / total:.3f}"
+    )
+    table.add_row(
+        "Hybrid RRF + Reranker",
+        f"{(hybrid_correct / total) * 100:.1f}%",
+        f"{mrr_hybrid / total:.3f}",
+    )
 
     console.print(table)
 

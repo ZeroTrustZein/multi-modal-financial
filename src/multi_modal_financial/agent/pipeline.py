@@ -75,6 +75,28 @@ class FinancialRAGPipeline:
         content = path.read_text(encoding="utf-8", errors="replace")
         return self.ingest_text(content, doc_id=doc_id, filename=path.name, ticker=ticker)
 
+    def ingest_directory(
+        self,
+        directory_path: str | Path,
+        pattern: str = "*.*",
+        default_ticker: str | None = None,
+    ) -> list[Document]:
+        """Batch ingest all financial documents in a folder matching the glob pattern."""
+        p = Path(directory_path)
+        if not p.is_dir():
+            return []
+
+        ingested_docs: list[Document] = []
+        for file in p.glob(pattern):
+            if file.suffix.lower() in {".txt", ".md", ".pdf", ".csv"}:
+                try:
+                    doc = self.ingest_file(file, ticker=default_ticker)
+                    ingested_docs.append(doc)
+                except Exception:
+                    continue
+
+        return ingested_docs
+
     def query(
         self,
         query_input: str | AgentQuery,
@@ -94,7 +116,9 @@ class FinancialRAGPipeline:
 
         # 2. Rerank candidates
         if use_reranker:
-            final_candidates = self.reranker.rerank(agent_query.query_str, scored_candidates, top_k=agent_query.top_k)
+            final_candidates = self.reranker.rerank(
+                agent_query.query_str, scored_candidates, top_k=agent_query.top_k
+            )
         else:
             final_candidates = scored_candidates[: agent_query.top_k]
 
@@ -114,7 +138,9 @@ class FinancialRAGPipeline:
 
         # Calculate confidence
         if grounding_verdicts:
-            overall_conf = sum(v.support_score for v in grounding_verdicts) / len(grounding_verdicts)
+            overall_conf = sum(v.support_score for v in grounding_verdicts) / len(
+                grounding_verdicts
+            )
         else:
             overall_conf = 0.5 if retrieved_chunks else 0.0
 
@@ -128,6 +154,13 @@ class FinancialRAGPipeline:
             retrieved_chunks=final_candidates,
             execution_time_ms=round(elapsed_ms, 2),
             overall_confidence=round(overall_conf, 4),
+            metadata={
+                "intent": agent_query.intent,
+                "ticker": agent_query.ticker_filter,
+                "period": agent_query.period_filter,
+                "year": agent_query.year_filter,
+                "candidate_count": len(final_candidates),
+            },
         )
 
     def _synthesize_answer(self, query_str: str, scored_chunks: list[ScoredChunk]) -> str:
@@ -145,7 +178,9 @@ class FinancialRAGPipeline:
                 sections.append(f"According to {header_info} [{ref_idx}], {chunk.content.strip()}")
             elif chunk.figure_data:
                 fig = chunk.figure_data
-                sections.append(f"Figure '{fig.caption or 'Chart'}' [{ref_idx}] illustrates: {fig.summary_text}")
+                sections.append(
+                    f"Figure '{fig.caption or 'Chart'}' [{ref_idx}] illustrates: {fig.summary_text}"
+                )
             else:
                 sections.append(f"From disclosure [{ref_idx}]: {chunk.content.strip()}")
 
