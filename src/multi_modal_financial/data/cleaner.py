@@ -50,6 +50,11 @@ class FinancialDataCleaner:
     )
     TOC_HEADER = re.compile(r"^\s*Table of Contents\s*$", re.IGNORECASE | re.MULTILINE)
 
+    # Footnote patterns
+    FOOTNOTE_BRACKET = re.compile(r"\[\w+\]$")
+    FOOTNOTE_PAREN = re.compile(r"\([a-zA-Z]\)$")
+    FOOTNOTE_SYMBOLS = re.compile(r"[\*†‡]+$")
+
     @classmethod
     def normalize_dashes(cls, text: str) -> str:
         """Replace Unicode dashes, hyphens, and minus symbols with ASCII hyphen."""
@@ -81,9 +86,9 @@ class FinancialDataCleaner:
         """Strip footnote superscripts/references like [1], (a), *, † from cell contents."""
         cell = cell_text.strip()
         # Remove trailing footnote markers like [1], [a], (1), (a), *, **, †
-        cell = re.sub(r"\[\w+\]$", "", cell).strip()
-        cell = re.sub(r"\([a-zA-Z]\)$", "", cell).strip()
-        cell = re.sub(r"[\*†‡]+$", "", cell).strip()
+        cell = cls.FOOTNOTE_BRACKET.sub("", cell).strip()
+        cell = cls.FOOTNOTE_PAREN.sub("", cell).strip()
+        cell = cls.FOOTNOTE_SYMBOLS.sub("", cell).strip()
         return cell
 
     @classmethod

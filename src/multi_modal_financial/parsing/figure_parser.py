@@ -10,6 +10,25 @@ from multi_modal_financial.types import FigureData
 class FigureParser:
     """Parses chart captions, data labels, and figure annotations."""
 
+    X_AXIS_PATTERN = re.compile(
+        r"(?:x-axis|horizontal\s+axis|x)\s*[:=]\s*([^\n,;]+)", re.IGNORECASE
+    )
+    Y_AXIS_PATTERN = re.compile(
+        r"(?:y-axis|vertical\s+axis|y)\s*[:=]\s*([^\n,;]+)", re.IGNORECASE
+    )
+    CAPTION_PATTERN = re.compile(
+        r"(?:Figure|Chart)\s*\d*[:\-–]\s*([^\n]+)", re.IGNORECASE
+    )
+    BRACKET_CAPTION_PATTERN = re.compile(
+        r"\[Figure[^:]*:\s*([^\]]+)\]", re.IGNORECASE
+    )
+    KV_PATTERN = re.compile(
+        r"^([A-Za-z0-9_\s\-/&]+)[:=]\s*\$?([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)\s*(?:M|B|K|%)?"
+    )
+    FALLBACK_KV_PATTERN = re.compile(
+        r"([A-Za-z0-9_\s]+):\s*\$?([0-9]+(?:\.[0-9]+)?)"
+    )
+
     @staticmethod
     def detect_chart_type(text: str) -> str:
         """Infer chart archetype from text descriptions."""
@@ -55,36 +74,30 @@ class FigureParser:
 
         return scale, unit
 
-    @staticmethod
-    def extract_axis_labels(text: str) -> tuple[str | None, str | None]:
+    @classmethod
+    def extract_axis_labels(cls, text: str) -> tuple[str | None, str | None]:
         """Extract X and Y axis descriptions from figure annotations."""
-        x_match = re.search(
-            r"(?:x-axis|horizontal\s+axis|x)\s*[:=]\s*([^\n,;]+)", text, re.IGNORECASE
-        )
-        y_match = re.search(
-            r"(?:y-axis|vertical\s+axis|y)\s*[:=]\s*([^\n,;]+)", text, re.IGNORECASE
-        )
+        x_match = cls.X_AXIS_PATTERN.search(text)
+        y_match = cls.Y_AXIS_PATTERN.search(text)
         x_label = x_match.group(1).strip() if x_match else None
         y_label = y_match.group(1).strip() if y_match else None
         return x_label, y_label
 
-    @staticmethod
-    def parse_figure_block(figure_text: str, figure_id: str = "fig_1") -> FigureData:
+    @classmethod
+    def parse_figure_block(cls, figure_text: str, figure_id: str = "fig_1") -> FigureData:
         """Parse structured figure description into FigureData with analytics."""
         caption: str | None = None
-        chart_type = FigureParser.detect_chart_type(figure_text)
-        scale, unit = FigureParser.detect_scale_and_unit(figure_text)
-        x_label, y_label = FigureParser.extract_axis_labels(figure_text)
+        chart_type = cls.detect_chart_type(figure_text)
+        scale, unit = cls.detect_scale_and_unit(figure_text)
+        x_label, y_label = cls.extract_axis_labels(figure_text)
         data_points: dict[str, float] = {}
 
         # Look for explicit caption
-        caption_match = re.search(
-            r"(?:Figure|Chart)\s*\d*[:\-–]\s*([^\n]+)", figure_text, re.IGNORECASE
-        )
+        caption_match = cls.CAPTION_PATTERN.search(figure_text)
         if caption_match:
             caption = caption_match.group(1).strip()
         elif "[Figure" in figure_text:
-            bracket_match = re.search(r"\[Figure[^:]*:\s*([^\]]+)\]", figure_text, re.IGNORECASE)
+            bracket_match = cls.BRACKET_CAPTION_PATTERN.search(figure_text)
             if bracket_match:
                 caption = bracket_match.group(1).strip()
 
@@ -93,10 +106,7 @@ class FigureParser:
         lines = figure_text.splitlines()
         for line in lines:
             line_clean = line.strip().lstrip("-*• ")
-            kv_match = re.search(
-                r"^([A-Za-z0-9_\s\-/&]+)[:=]\s*\$?([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)\s*(?:M|B|K|%)?",
-                line_clean,
-            )
+            kv_match = cls.KV_PATTERN.search(line_clean)
             if kv_match:
                 k = kv_match.group(1).strip()
                 # Exclude axis or structural labels
@@ -110,7 +120,7 @@ class FigureParser:
 
         # Fallback regex over whole text if no lines matched
         if not data_points:
-            kv_matches = re.findall(r"([A-Za-z0-9_\s]+):\s*\$?([0-9]+(?:\.[0-9]+)?)", figure_text)
+            kv_matches = cls.FALLBACK_KV_PATTERN.findall(figure_text)
             for k, v in kv_matches:
                 k_clean = k.strip()
                 if k_clean.lower() in {"figure", "chart", "x-axis", "y-axis", "x", "y"}:

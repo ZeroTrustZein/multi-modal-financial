@@ -27,6 +27,7 @@ from multi_modal_financial.storage.persistence import IndexManifest, IndexPersis
 from multi_modal_financial.types import (
     AgentQuery,
     AgentResponse,
+    BaseFinancialModel,
     Chunk,
     Citation,
     Currency,
@@ -51,6 +52,7 @@ from multi_modal_financial.types import (
 
 __all__ = [
     "__version__",
+    "BaseFinancialModel",
     "ModalType",
     "DocumentType",
     "FinancialStatementType",

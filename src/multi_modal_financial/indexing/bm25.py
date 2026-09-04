@@ -8,6 +8,14 @@ from collections import Counter
 from typing import Any
 
 
+_PAREN_CLEAN_PATTERN = re.compile(
+    r"\(([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?(?:[MBKmbk%])?)\)"
+)
+_TOKEN_PATTERN = re.compile(
+    r"\$?-?[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?%?(?:[a-zA-Z])?|[a-zA-Z0-9_\-]+"
+)
+
+
 class BM25Index:
     """Okapi BM25 implementation tuned for financial vocabulary and numerical terms."""
 
@@ -32,17 +40,12 @@ class BM25Index:
         tokens: list[str] = []
 
         # Handle accounting parenthesized negatives, e.g. (1,234.5M) -> -1234.5m
-        paren_clean = re.sub(
-            r"\(([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?(?:[MBKmbk%])?)\)",
-            r"-\1",
-            text,
-        )
+        paren_clean = _PAREN_CLEAN_PATTERN.sub(r"-\1", text)
 
         # Regex captures:
         # - currencies & numbers: $12,500, -$45.2B, 14.5%
         # - alphanumeric tokens, tickers, acronyms: AAPL, FY2025, Q3, EBITDA
-        pattern = r"\$?-?[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?%?(?:[a-zA-Z])?|[a-zA-Z0-9_\-]+"
-        raw_tokens = re.findall(pattern, paren_clean)
+        raw_tokens = _TOKEN_PATTERN.findall(paren_clean)
 
         for tok in raw_tokens:
             t_low = tok.lower()

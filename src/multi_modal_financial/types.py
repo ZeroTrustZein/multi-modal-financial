@@ -2,13 +2,29 @@
 
 from __future__ import annotations
 
+import math
 import re
 from enum import Enum
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-T = TypeVar("T", bound="BaseModel")
+T = TypeVar("T", bound="BaseFinancialModel")
+
+
+class BaseFinancialModel(BaseModel):
+    """Base domain model providing unified serialization and configuration."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize model to dictionary."""
+        return self.model_dump()
+
+    @classmethod
+    def from_dict(cls: type[T], data: dict[str, Any]) -> T:
+        """Instantiate model from dictionary."""
+        return cls.model_validate(data)
 
 
 class ModalType(str, Enum):
@@ -129,10 +145,8 @@ def scale_multiplier(scale: str | UnitScale | None) -> float:
     return mapping.get(s, 1.0)
 
 
-class FinancialMetric(BaseModel):
+class FinancialMetric(BaseFinancialModel):
     """Structured financial metric extracted from text, tables, or figures."""
-
-    model_config = ConfigDict(extra="ignore")
 
     name: str
     raw_value: str
@@ -249,20 +263,9 @@ class FinancialMetric(BaseModel):
             return f"{sign}{unit_prefix}{abs_v:,.0f}K{unit_suffix}"
         return f"{sign}{unit_prefix}{abs_v:,.2f}{unit_suffix}".strip()
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize model to dictionary."""
-        return self.model_dump()
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> FinancialMetric:
-        """Instantiate model from dictionary."""
-        return cls.model_validate(data)
-
-
-class DocumentMetadata(BaseModel):
+class DocumentMetadata(BaseFinancialModel):
     """Metadata describing a financial filing or report."""
-
-    model_config = ConfigDict(extra="ignore")
 
     doc_id: str
     filename: str
@@ -320,20 +323,9 @@ class DocumentMetadata(BaseModel):
         parts.append(self.doc_type)
         return f"[{' | '.join(parts)}]"
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize model to dictionary."""
-        return self.model_dump()
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> DocumentMetadata:
-        """Instantiate model from dictionary."""
-        return cls.model_validate(data)
-
-
-class TableData(BaseModel):
+class TableData(BaseFinancialModel):
     """Structured representation of a financial table."""
-
-    model_config = ConfigDict(extra="ignore")
 
     headers: list[str] = Field(default_factory=list)
     rows: list[list[str]] = Field(default_factory=list)
@@ -456,20 +448,41 @@ class TableData(BaseModel):
 
         return metrics
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize model to dictionary."""
-        return self.model_dump()
+    def find_metric_value(self, col_idx: int, *keywords: str) -> float | None:
+        """Find numerical value in a given column prioritizing exact label match over substring."""
+        # Pass 1: exact matches
+        for kw in keywords:
+            kw_clean = kw.lower().strip()
+            for row in self.rows:
+                if not row:
+                    continue
+                if row[0].lower().strip() == kw_clean:
+                    if col_idx < len(row):
+                        metric = FinancialMetric.from_raw(name=row[0], raw_value=row[col_idx])
+                        if metric.value is not None and not math.isnan(metric.value):
+                            return metric.value
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> TableData:
-        """Instantiate model from dictionary."""
-        return cls.model_validate(data)
+        # Pass 2: substring matches excluding 'current' for total assets/liabilities
+        for kw in keywords:
+            kw_clean = kw.lower().strip()
+            for row in self.rows:
+                if not row:
+                    continue
+                row_label = row[0].lower().strip()
+                if kw_clean in ["total assets", "assets"] and "current" in row_label:
+                    continue
+                if kw_clean in ["total liabilities", "liabilities"] and "current" in row_label:
+                    continue
+                if kw_clean in row_label:
+                    if col_idx < len(row):
+                        metric = FinancialMetric.from_raw(name=row[0], raw_value=row[col_idx])
+                        if metric.value is not None and not math.isnan(metric.value):
+                            return metric.value
+        return None
 
 
-class FigureData(BaseModel):
+class FigureData(BaseFinancialModel):
     """Metadata and extracted summary of a chart or diagram."""
-
-    model_config = ConfigDict(extra="ignore")
 
     figure_id: str
     caption: str | None = None
@@ -510,20 +523,9 @@ class FigureData(BaseModel):
                 lines.append(f"- {k}: {v:g}{unit_str}")
         return "\n".join(lines)
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize model to dictionary."""
-        return self.model_dump()
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> FigureData:
-        """Instantiate model from dictionary."""
-        return cls.model_validate(data)
-
-
-class Chunk(BaseModel):
+class Chunk(BaseFinancialModel):
     """Atomic unit of retrieved context, retaining modality and provenance."""
-
-    model_config = ConfigDict(extra="ignore")
 
     chunk_id: str
     doc_id: str
@@ -568,20 +570,9 @@ class Chunk(BaseModel):
                 pass
         return parsed
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize model to dictionary."""
-        return self.model_dump()
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Chunk:
-        """Instantiate model from dictionary."""
-        return cls.model_validate(data)
-
-
-class Document(BaseModel):
+class Document(BaseFinancialModel):
     """Financial document container holding chunks and metadata."""
-
-    model_config = ConfigDict(extra="ignore")
 
     doc_id: str
     metadata: DocumentMetadata
@@ -613,15 +604,6 @@ class Document(BaseModel):
                 all_metrics.extend(c.table_data.extract_metrics())
         return all_metrics
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize model to dictionary."""
-        return self.model_dump()
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Document:
-        """Instantiate model from dictionary."""
-        return cls.model_validate(data)
-
     def to_json(self, indent: int | None = 2) -> str:
         """Serialize document to JSON string."""
         return self.model_dump_json(indent=indent)
@@ -632,10 +614,8 @@ class Document(BaseModel):
         return cls.model_validate_json(json_str)
 
 
-class ScoredChunk(BaseModel):
+class ScoredChunk(BaseFinancialModel):
     """Retrieval candidate scored across sparse and dense modalities."""
-
-    model_config = ConfigDict(extra="ignore")
 
     chunk: Chunk
     score: float
@@ -645,20 +625,9 @@ class ScoredChunk(BaseModel):
     rerank_score: float | None = None
     modality_bonus: float = 0.0
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize model to dictionary."""
-        return self.model_dump()
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ScoredChunk:
-        """Instantiate model from dictionary."""
-        return cls.model_validate(data)
-
-
-class Citation(BaseModel):
+class Citation(BaseFinancialModel):
     """Grounding citation linking a synthesized claim to source evidence."""
-
-    model_config = ConfigDict(extra="ignore")
 
     citation_id: str
     chunk_id: str
@@ -673,20 +642,9 @@ class Citation(BaseModel):
         """Format citation as an inline reference badge."""
         return f"[{self.doc_id}:p{self.page_number}#{self.chunk_id}]"
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize model to dictionary."""
-        return self.model_dump()
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Citation:
-        """Instantiate model from dictionary."""
-        return cls.model_validate(data)
-
-
-class GroundingVerdict(BaseModel):
+class GroundingVerdict(BaseFinancialModel):
     """Verification output validating claim attribution against retrieved source chunks."""
-
-    model_config = ConfigDict(extra="ignore")
 
     claim: str
     citations: list[Citation] = Field(default_factory=list)
@@ -696,20 +654,9 @@ class GroundingVerdict(BaseModel):
     unsupported_numbers: list[str] = Field(default_factory=list)
     reasoning: str = ""
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize model to dictionary."""
-        return self.model_dump()
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> GroundingVerdict:
-        """Instantiate model from dictionary."""
-        return cls.model_validate(data)
-
-
-class AgentQuery(BaseModel):
+class AgentQuery(BaseFinancialModel):
     """Input query to financial RAG agent."""
-
-    model_config = ConfigDict(extra="ignore")
 
     query_str: str
     ticker_filter: str | None = None
@@ -737,20 +684,9 @@ class AgentQuery(BaseModel):
             return None
         return str(v).strip().upper()
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize model to dictionary."""
-        return self.model_dump()
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AgentQuery:
-        """Instantiate model from dictionary."""
-        return cls.model_validate(data)
-
-
-class AgentResponse(BaseModel):
+class AgentResponse(BaseFinancialModel):
     """Structured response from the financial RAG agent with citations and verification."""
-
-    model_config = ConfigDict(extra="ignore")
 
     query: str
     answer: str
@@ -781,15 +717,6 @@ class AgentResponse(BaseModel):
             f"Conf: {self.overall_confidence:.2f} | Latency: {self.execution_time_ms:.1f}ms"
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize model to dictionary."""
-        return self.model_dump()
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AgentResponse:
-        """Instantiate model from dictionary."""
-        return cls.model_validate(data)
-
     def to_json(self, indent: int | None = 2) -> str:
         """Serialize response to JSON string."""
         return self.model_dump_json(indent=indent)
@@ -800,10 +727,8 @@ class AgentResponse(BaseModel):
         return cls.model_validate_json(json_str)
 
 
-class RetrievalBenchmarkResult(BaseModel):
+class RetrievalBenchmarkResult(BaseFinancialModel):
     """Performance evaluation metrics for financial retrieval pipelines."""
-
-    model_config = ConfigDict(extra="ignore")
 
     method_name: str
     recall_at_1: float = Field(ge=0.0, le=1.0)
@@ -813,20 +738,9 @@ class RetrievalBenchmarkResult(BaseModel):
     query_count: int = Field(default=0, ge=0)
     avg_latency_ms: float = Field(default=0.0, ge=0.0)
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize model to dictionary."""
-        return self.model_dump()
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> RetrievalBenchmarkResult:
-        """Instantiate model from dictionary."""
-        return cls.model_validate(data)
-
-
-class ProvenanceRecord(BaseModel):
+class ProvenanceRecord(BaseFinancialModel):
     """Fine-grained audit trail tracing a synthesized claim to source evidence."""
-
-    model_config = ConfigDict(extra="ignore")
 
     record_id: str
     doc_id: str
@@ -837,20 +751,9 @@ class ProvenanceRecord(BaseModel):
     source_snippet: str = ""
     verified: bool = False
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize model to dictionary."""
-        return self.model_dump()
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ProvenanceRecord:
-        """Instantiate model from dictionary."""
-        return cls.model_validate(data)
-
-
-class ExtractionFilter(BaseModel):
+class ExtractionFilter(BaseFinancialModel):
     """Filters applied during multi-modal document parsing and ingestion."""
-
-    model_config = ConfigDict(extra="ignore")
 
     ticker: str | None = None
     period: str | None = None
@@ -864,12 +767,3 @@ class ExtractionFilter(BaseModel):
     def clean_filter_ticker(cls, v: Any) -> str | None:
         """Capitalize and strip ticker."""
         return str(v).strip().upper() if v is not None else None
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize model to dictionary."""
-        return self.model_dump()
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ExtractionFilter:
-        """Instantiate model from dictionary."""
-        return cls.model_validate(data)

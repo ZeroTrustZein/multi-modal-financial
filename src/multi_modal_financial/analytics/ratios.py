@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from dataclasses import asdict, dataclass
 
 from multi_modal_financial.types import Document, TableData
@@ -102,39 +101,7 @@ class FinancialRatioCalculator:
         cls, table: TableData, col_idx: int, *keywords: str
     ) -> float | None:
         """Helper to retrieve metric value prioritizing exact label matches."""
-        # Pass 1: exact matches
-        for kw in keywords:
-            kw_clean = kw.lower().strip()
-            for row in table.rows:
-                if not row:
-                    continue
-                if row[0].lower().strip() == kw_clean:
-                    if col_idx < len(row):
-                        from multi_modal_financial.types import FinancialMetric
-
-                        metric = FinancialMetric.from_raw(name=row[0], raw_value=row[col_idx])
-                        if metric.value is not None and not math.isnan(metric.value):
-                            return metric.value
-
-        # Pass 2: substring matches
-        for kw in keywords:
-            kw_clean = kw.lower().strip()
-            for row in table.rows:
-                if not row:
-                    continue
-                row_label = row[0].lower().strip()
-                if kw_clean in ["total assets", "assets"] and "current" in row_label:
-                    continue
-                if kw_clean in ["total liabilities", "liabilities"] and "current" in row_label:
-                    continue
-                if kw_clean in row_label:
-                    if col_idx < len(row):
-                        from multi_modal_financial.types import FinancialMetric
-
-                        metric = FinancialMetric.from_raw(name=row[0], raw_value=row[col_idx])
-                        if metric.value is not None and not math.isnan(metric.value):
-                            return metric.value
-        return None
+        return table.find_metric_value(col_idx, *keywords)
 
     @classmethod
     def compute_from_table(cls, table: TableData, col_idx: int = 1) -> RatioSummary:
