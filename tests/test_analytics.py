@@ -1,6 +1,5 @@
 """Tests for financial ratio calculator and multi-period comparator."""
 
-
 from multi_modal_financial.analytics.comparator import PeriodComparator
 from multi_modal_financial.analytics.ratios import FinancialRatioCalculator
 from multi_modal_financial.types import (
@@ -104,7 +103,9 @@ class TestPeriodComparator:
         assert var.trend == "DOWN"
 
     def test_calculate_variance_flat(self):
-        var = PeriodComparator.calculate_variance("Operating Margin", base_val=15.0, compare_val=15.0)
+        var = PeriodComparator.calculate_variance(
+            "Operating Margin", base_val=15.0, compare_val=15.0
+        )
         assert var.absolute_change == 0.0
         assert var.percentage_change == 0.0
         assert var.trend == "FLAT"

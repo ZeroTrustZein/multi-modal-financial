@@ -98,7 +98,9 @@ class FinancialRatioCalculator:
         return results
 
     @classmethod
-    def _extract_number_from_table(cls, table: TableData, col_idx: int, *keywords: str) -> float | None:
+    def _extract_number_from_table(
+        cls, table: TableData, col_idx: int, *keywords: str
+    ) -> float | None:
         """Helper to retrieve metric value prioritizing exact label matches."""
         # Pass 1: exact matches
         for kw in keywords:
@@ -140,9 +142,13 @@ class FinancialRatioCalculator:
         summary = RatioSummary()
 
         # Profitability
-        rev = cls._extract_number_from_table(table, col_idx, "total revenue", "revenue", "net sales")
+        rev = cls._extract_number_from_table(
+            table, col_idx, "total revenue", "revenue", "net sales"
+        )
         gp = cls._extract_number_from_table(table, col_idx, "gross profit", "gross margin")
-        op_inc = cls._extract_number_from_table(table, col_idx, "operating income", "operating profit")
+        op_inc = cls._extract_number_from_table(
+            table, col_idx, "operating income", "operating profit"
+        )
         net_inc = cls._extract_number_from_table(table, col_idx, "net income", "net earnings")
 
         if rev is not None and rev > 0:
@@ -152,10 +158,16 @@ class FinancialRatioCalculator:
             summary.net_margin_pct = margins.get("net_margin")
 
         # Liquidity
-        curr_assets = cls._extract_number_from_table(table, col_idx, "total current assets", "current assets")
-        curr_liab = cls._extract_number_from_table(table, col_idx, "total current liabilities", "current liabilities")
+        curr_assets = cls._extract_number_from_table(
+            table, col_idx, "total current assets", "current assets"
+        )
+        curr_liab = cls._extract_number_from_table(
+            table, col_idx, "total current liabilities", "current liabilities"
+        )
         cash = cls._extract_number_from_table(table, col_idx, "cash and cash equivalents", "cash")
-        mkt_sec = cls._extract_number_from_table(table, col_idx, "marketable securities", "short-term investments")
+        mkt_sec = cls._extract_number_from_table(
+            table, col_idx, "marketable securities", "short-term investments"
+        )
         ar = cls._extract_number_from_table(table, col_idx, "accounts receivable", "receivables")
 
         if curr_assets is not None and curr_liab is not None and curr_liab > 0:
@@ -166,7 +178,11 @@ class FinancialRatioCalculator:
         # Solvency
         tot_debt = cls._extract_number_from_table(table, col_idx, "total debt", "long-term debt")
         equity = cls._extract_number_from_table(
-            table, col_idx, "total stockholders' equity", "total shareholders' equity", "total equity"
+            table,
+            col_idx,
+            "total stockholders' equity",
+            "total shareholders' equity",
+            "total equity",
         )
         assets = cls._extract_number_from_table(table, col_idx, "total assets")
 

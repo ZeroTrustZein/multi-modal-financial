@@ -79,7 +79,9 @@ class PeriodComparator:
                 m_base = base_map[key]
                 if m_base.value is None or math.isnan(m_base.value):
                     continue
-                unit = "%" if (m_comp.scale == "percent" or "%" in m_comp.raw_value) else m_comp.unit
+                unit = (
+                    "%" if (m_comp.scale == "percent" or "%" in m_comp.raw_value) else m_comp.unit
+                )
                 var = cls.calculate_variance(
                     name=m_comp.name,
                     base_val=m_base.value,
@@ -115,7 +117,11 @@ class PeriodComparator:
                 and not math.isnan(base_metric.value)
                 and not math.isnan(comp_metric.value)
             ):
-                unit = "%" if (comp_metric.scale == "percent" or "%" in comp_metric.raw_value) else str(table.unit or "USD")
+                unit = (
+                    "%"
+                    if (comp_metric.scale == "percent" or "%" in comp_metric.raw_value)
+                    else str(table.unit or "USD")
+                )
                 var = cls.calculate_variance(
                     name=name,
                     base_val=base_metric.value,

@@ -146,4 +146,6 @@ class TestGroundingAuditor:
 
         assert json_out.exists()
         assert md_out.exists()
-        assert "Financial RAG Grounding & Factual Audit Report" in md_out.read_text(encoding="utf-8")
+        assert "Financial RAG Grounding & Factual Audit Report" in md_out.read_text(
+            encoding="utf-8"
+        )

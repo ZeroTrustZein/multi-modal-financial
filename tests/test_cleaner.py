@@ -1,6 +1,5 @@
 """Tests for financial document text cleaner and table repair subsystem."""
 
-
 from multi_modal_financial.data.cleaner import FinancialDataCleaner
 
 
@@ -41,7 +40,9 @@ class TestFinancialDataCleaner:
 
     def test_clean_cell_footnotes(self):
         assert FinancialDataCleaner.clean_cell_footnotes("$1,250[1]") == "$1,250"
-        assert FinancialDataCleaner.clean_cell_footnotes("Operating Income(a)") == "Operating Income"
+        assert (
+            FinancialDataCleaner.clean_cell_footnotes("Operating Income(a)") == "Operating Income"
+        )
         assert FinancialDataCleaner.clean_cell_footnotes("14.5%*") == "14.5%"
         assert FinancialDataCleaner.clean_cell_footnotes("Net Assets †") == "Net Assets"
 

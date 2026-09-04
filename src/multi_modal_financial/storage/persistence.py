@@ -81,7 +81,11 @@ class IndexPersistence:
             bm25_file.write_text(json.dumps(bm25_state, indent=2), encoding="utf-8")
 
             # 4. Save Dense Vectors
-            vectors = index.vector.vectors if index.vector.vectors is not None else np.empty((0, index.vector.dimension), dtype=np.float32)
+            vectors = (
+                index.vector.vectors
+                if index.vector.vectors is not None
+                else np.empty((0, index.vector.dimension), dtype=np.float32)
+            )
             vec_file = work_dir / "vectors.npz"
             np.savez_compressed(
                 vec_file,
@@ -117,7 +121,9 @@ class IndexPersistence:
 
             if compress:
                 # Create zip archive
-                archive_path = target if target.suffix.lower() == ".zip" else target.with_suffix(".zip")
+                archive_path = (
+                    target if target.suffix.lower() == ".zip" else target.with_suffix(".zip")
+                )
                 with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
                     for f in [manifest_file, chunks_file, docs_file, bm25_file, vec_file]:
                         zf.write(f, arcname=f.name)
@@ -192,7 +198,9 @@ class IndexPersistence:
                 hybrid.bm25.doc_len = bm25_state.get("doc_len", [])
                 hybrid.bm25.doc_tokens = bm25_state.get("doc_tokens", [])
                 hybrid.bm25.doc_ids = bm25_state.get("doc_ids", [])
-                hybrid.bm25.doc_id_to_idx = {doc_id: i for i, doc_id in enumerate(hybrid.bm25.doc_ids)}
+                hybrid.bm25.doc_id_to_idx = {
+                    doc_id: i for i, doc_id in enumerate(hybrid.bm25.doc_ids)
+                }
 
             # 6. Restore Dense Vectors
             vec_path = read_dir / "vectors.npz"

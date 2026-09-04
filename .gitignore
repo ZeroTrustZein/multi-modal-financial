@@ -46,7 +46,7 @@ coverage.xml
 *.swo
 
 # Project specific
-data/
+/data/
 *.pdf
 logs/
 .dev.log

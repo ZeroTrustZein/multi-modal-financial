@@ -1,6 +1,5 @@
 """Tests for financial data validation and statement reconciliation."""
 
-
 from multi_modal_financial.data.validator import (
     FinancialTableValidator,
     IssueSeverity,

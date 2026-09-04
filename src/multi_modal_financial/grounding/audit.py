@@ -41,7 +41,7 @@ class GroundingAuditReport:
             "## Summary Metrics",
             f"- **Total Queries Audited**: {self.total_queries}",
             f"- **Total Claims Evaluated**: {self.total_claims}",
-            f"- **Supported Claims**: {self.supported_claims} ({(self.supported_claims / max(self.total_claims, 1))*100:.1f}%)",
+            f"- **Supported Claims**: {self.supported_claims} ({(self.supported_claims / max(self.total_claims, 1)) * 100:.1f}%)",
             f"- **Partially Supported Claims**: {self.partially_supported_claims}",
             f"- **Unsupported Claims**: {self.unsupported_claims}",
             f"- **Hallucination Rate**: {self.hallucination_rate * 100:.2f}%",
@@ -50,11 +50,13 @@ class GroundingAuditReport:
         ]
 
         if self.flagged_numbers:
-            lines.extend([
-                "## Flagged Unsupported Figures",
-                ", ".join(f"`{num}`" for num in self.flagged_numbers),
-                "",
-            ])
+            lines.extend(
+                [
+                    "## Flagged Unsupported Figures",
+                    ", ".join(f"`{num}`" for num in self.flagged_numbers),
+                    "",
+                ]
+            )
 
         lines.append("## Query Details")
         lines.append("| Query | Claims | Supported | Hallucinated Figures | Status |")
@@ -83,15 +85,17 @@ class GroundingAuditor:
         verdicts: list[GroundingVerdict] = response.grounding_verdicts
         total_claims = len(verdicts)
         supported = sum(1 for v in verdicts if v.is_supported)
-        unsupported_nums = list(
-            {num for v in verdicts for num in v.unsupported_numbers}
-        )
+        unsupported_nums = list({num for v in verdicts for num in v.unsupported_numbers})
 
         has_hallucinated_nums = len(unsupported_nums) > 0
         unsupported_claims = sum(1 for v in verdicts if v.status == GroundingStatus.UNSUPPORTED)
-        partially_supported = sum(1 for v in verdicts if v.status == GroundingStatus.PARTIALLY_SUPPORTED)
+        partially_supported = sum(
+            1 for v in verdicts if v.status == GroundingStatus.PARTIALLY_SUPPORTED
+        )
 
-        status = "FAIL" if has_hallucinated_nums or (total_claims > 0 and supported == 0) else "PASS"
+        status = (
+            "FAIL" if has_hallucinated_nums or (total_claims > 0 and supported == 0) else "PASS"
+        )
 
         return {
             "query": response.query,
@@ -127,9 +131,7 @@ class GroundingAuditor:
             confidences.append(resp.overall_confidence)
 
         unique_flagged = sorted(set(all_flagged_nums))
-        hallucination_rate = (
-            (unsupported_claims / total_claims) if total_claims > 0 else 0.0
-        )
+        hallucination_rate = (unsupported_claims / total_claims) if total_claims > 0 else 0.0
         mean_conf = (sum(confidences) / len(confidences)) if confidences else 0.0
 
         if hallucination_rate <= self.max_allowed_hallucination_rate and not unique_flagged:

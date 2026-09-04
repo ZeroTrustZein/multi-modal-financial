@@ -1,11 +1,19 @@
 """Tests for synthetic financial filings and batch document loader."""
 
+import json
 from pathlib import Path
+
+import pytest
 
 from multi_modal_financial.data.loader import BatchDocumentLoader
 from multi_modal_financial.data.synthetic import SyntheticFilingGenerator
 from multi_modal_financial.data.validator import StatementReconciler
-from multi_modal_financial.types import DocumentType, FinancialStatementType
+from multi_modal_financial.types import (
+    Document,
+    DocumentMetadata,
+    DocumentType,
+    FinancialStatementType,
+)
 
 
 class TestSyntheticFilingGenerator:
@@ -34,7 +42,9 @@ class TestSyntheticFilingGenerator:
 
     def test_generate_filing_document(self):
         gen = SyntheticFilingGenerator(seed=999)
-        doc = gen.generate_filing_document(ticker="NVDA", year=2025, period="Q3", doc_type=DocumentType.TEN_Q)
+        doc = gen.generate_filing_document(
+            ticker="NVDA", year=2025, period="Q3", doc_type=DocumentType.TEN_Q
+        )
         assert doc.metadata.ticker == "NVDA"
         assert doc.metadata.period == "Q3"
         assert doc.metadata.year == 2025
@@ -94,3 +104,20 @@ class TestBatchDocumentLoader:
         # Test streaming iter_documents
         streamed = list(loader.iter_documents(tmp_path))
         assert len(streamed) == 3
+
+    def test_load_json_file(self, tmp_path: Path):
+        doc = Document(
+            doc_id="test_json_doc",
+            metadata=DocumentMetadata(doc_id="test_json_doc", filename="doc.json", ticker="TEST"),
+            chunks=[],
+        )
+        json_file = tmp_path / "TEST_FILING_2025.json"
+        json_file.write_text(json.dumps(doc.to_dict()), encoding="utf-8")
+
+        loader = BatchDocumentLoader()
+        loaded = loader.load_file(json_file)
+        assert loaded.doc_id == "test_json_doc"
+
+        # Missing file error
+        with pytest.raises(FileNotFoundError):
+            loader.load_file(tmp_path / "non_existent.txt")
