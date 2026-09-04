@@ -15,7 +15,7 @@ from multi_modal_financial.data.validator import (
     ValidationIssue,
     ValidationReport,
 )
-from multi_modal_financial.grounding.audit import GroundingAuditReport, GroundingAuditor
+from multi_modal_financial.grounding.audit import GroundingAuditor, GroundingAuditReport
 from multi_modal_financial.indexing.hybrid import HybridIndex
 from multi_modal_financial.pipeline.orchestrator import (
     FinancialPipelineOrchestrator,

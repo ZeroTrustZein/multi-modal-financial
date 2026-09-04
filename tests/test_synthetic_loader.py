@@ -1,7 +1,6 @@
 """Tests for synthetic financial filings and batch document loader."""
 
 from pathlib import Path
-import pytest
 
 from multi_modal_financial.data.loader import BatchDocumentLoader
 from multi_modal_financial.data.synthetic import SyntheticFilingGenerator

@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 import hashlib
 import json
-from pathlib import Path
 import shutil
 import zipfile
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 
-from multi_modal_financial.indexing.bm25 import BM25Index
 from multi_modal_financial.indexing.hybrid import HybridIndex
-from multi_modal_financial.indexing.vector import DenseVectorIndex
 from multi_modal_financial.types import Chunk, Document
 
 

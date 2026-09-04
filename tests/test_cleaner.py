@@ -1,6 +1,5 @@
 """Tests for financial document text cleaner and table repair subsystem."""
 
-import pytest
 
 from multi_modal_financial.data.cleaner import FinancialDataCleaner
 
@@ -74,10 +73,7 @@ class TestFinancialDataCleaner:
         Page 14 of 120
 
         Operating income was ($250) million in Q3\u20132025.
-        
-        
-        
-        
+
         Gross margin expanded to 42.0%.
         </DOCUMENT>
         """

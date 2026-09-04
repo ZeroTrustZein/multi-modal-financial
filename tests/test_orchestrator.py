@@ -1,6 +1,7 @@
 """Tests for FinancialPipelineOrchestrator end-to-end integration."""
 
 from pathlib import Path
+
 import pytest
 
 from multi_modal_financial.data.synthetic import SyntheticFilingGenerator
@@ -97,3 +98,23 @@ class TestFinancialPipelineOrchestrator:
         assert status["bm25_vocab_size"] > 0
         assert status["vector_dimension"] > 0
         assert status["query_cache"] is not None
+
+    def test_orchestrator_analytics_and_comparison(self, setup_sample_corpus: Path):
+        orch = FinancialPipelineOrchestrator()
+        docs = orch.ingest_files(setup_sample_corpus)
+        doc_ids = [d.doc_id for d in docs]
+
+        # Analyze ratios for first document
+        ratios = orch.analyze_document_ratios(doc_ids[0])
+        assert ratios is not None
+
+        # Compare two documents
+        variances = orch.compare_documents(doc_ids[0], doc_ids[1])
+        assert isinstance(variances, list)
+
+        # Non-existent doc error
+        with pytest.raises(KeyError):
+            orch.analyze_document_ratios("non_existent_id")
+
+        with pytest.raises(KeyError):
+            orch.compare_documents(doc_ids[0], "missing_id")

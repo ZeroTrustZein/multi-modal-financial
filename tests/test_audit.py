@@ -1,9 +1,8 @@
 """Tests for grounding auditor, provenance reporting, and compliance ledgers."""
 
 from pathlib import Path
-import pytest
 
-from multi_modal_financial.grounding.audit import GroundingAuditReport, GroundingAuditor
+from multi_modal_financial.grounding.audit import GroundingAuditor
 from multi_modal_financial.types import (
     AgentResponse,
     Citation,

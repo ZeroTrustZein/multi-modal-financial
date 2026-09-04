@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections import OrderedDict
-from collections.abc import Callable
 import hashlib
 import time
+from collections import OrderedDict
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np

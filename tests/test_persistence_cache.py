@@ -1,6 +1,7 @@
 """Tests for index persistence, embedding cache, and query cache subsystem."""
 
 from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -8,7 +9,6 @@ from multi_modal_financial.indexing.hybrid import HybridIndex
 from multi_modal_financial.storage.cache import EmbeddingCache, QueryCache
 from multi_modal_financial.storage.persistence import IndexPersistence
 from multi_modal_financial.types import (
-    AgentQuery,
     AgentResponse,
     Chunk,
     Document,

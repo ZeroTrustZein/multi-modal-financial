@@ -1,17 +1,12 @@
 """Tests for financial ratio calculator and multi-period comparator."""
 
-import pytest
 
 from multi_modal_financial.analytics.comparator import PeriodComparator
 from multi_modal_financial.analytics.ratios import FinancialRatioCalculator
 from multi_modal_financial.types import (
-    Currency,
-    Document,
-    DocumentMetadata,
     FinancialMetric,
     FinancialStatementType,
     TableData,
-    UnitScale,
 )
 
 
@@ -60,6 +55,37 @@ class TestFinancialRatioCalculator:
         assert ratios.gross_margin_pct == 40.0
         assert ratios.operating_margin_pct == 20.0
         assert ratios.net_margin_pct == 15.0
+
+    def test_compute_from_document(self):
+        from multi_modal_financial.types import Chunk, Document, DocumentMetadata, ModalType
+
+        tbl = TableData(
+            title="Statement of Operations",
+            headers=["Metric", "2025"],
+            rows=[
+                ["Total Revenue", "$2,000"],
+                ["Gross Profit", "$1,000"],
+                ["Operating Income", "$500"],
+                ["Net Income", "$400"],
+            ],
+            statement_type=FinancialStatementType.INCOME_STATEMENT,
+        )
+        chunk = Chunk(
+            chunk_id="chk_1",
+            doc_id="doc_1",
+            content=tbl.to_markdown(),
+            modal_type=ModalType.TABLE,
+            table_data=tbl,
+        )
+        doc = Document(
+            doc_id="doc_1",
+            metadata=DocumentMetadata(doc_id="doc_1", filename="doc1.txt"),
+            chunks=[chunk],
+        )
+        ratios = FinancialRatioCalculator.compute_from_document(doc)
+        assert ratios.gross_margin_pct == 50.0
+        assert ratios.operating_margin_pct == 25.0
+        assert ratios.net_margin_pct == 20.0
 
 
 class TestPeriodComparator:

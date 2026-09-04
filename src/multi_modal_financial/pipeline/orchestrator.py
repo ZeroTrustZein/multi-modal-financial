@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-import time
 from typing import Any
 
 from multi_modal_financial.agent.pipeline import FinancialRAGPipeline
@@ -14,7 +14,7 @@ from multi_modal_financial.analytics.ratios import FinancialRatioCalculator, Rat
 from multi_modal_financial.data.cleaner import FinancialDataCleaner
 from multi_modal_financial.data.loader import BatchDocumentLoader
 from multi_modal_financial.data.validator import FinancialTableValidator
-from multi_modal_financial.grounding.audit import GroundingAuditReport, GroundingAuditor
+from multi_modal_financial.grounding.audit import GroundingAuditor, GroundingAuditReport
 from multi_modal_financial.grounding.verifier import GroundingVerifier
 from multi_modal_financial.indexing.hybrid import HybridIndex
 from multi_modal_financial.retrieval.fusion import HybridRetriever
@@ -176,7 +176,7 @@ class FinancialPipelineOrchestrator:
 
     def run_batch_queries(
         self,
-        queries: list[str | AgentQuery],
+        queries: Sequence[str | AgentQuery],
         top_k: int | None = None,
     ) -> list[AgentResponse]:
         """Execute a batch of financial queries sequentially or concurrently."""
