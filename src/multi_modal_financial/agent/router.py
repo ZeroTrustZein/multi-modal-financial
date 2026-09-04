@@ -158,11 +158,14 @@ class QueryRouter:
         tokens = query_str.split()
         ticker: str | None = None
         for tok in tokens:
+            if any(c.isdigit() for c in tok):
+                continue
             cleaned = re.sub(r"[^A-Za-z]", "", tok)
             if (
                 cleaned.isupper()
                 and 1 <= len(cleaned) <= 5
                 and cleaned not in self.EXCLUDED_UPPERCASE
+                and cleaned not in {"Q", "FY", "K", "A", "AN"}
             ):
                 ticker = cleaned
                 break

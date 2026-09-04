@@ -3,8 +3,27 @@
 __version__ = "0.1.0"
 
 from multi_modal_financial.agent.pipeline import FinancialRAGPipeline
+from multi_modal_financial.analytics.comparator import PeriodComparator, VarianceResult
+from multi_modal_financial.analytics.ratios import FinancialRatioCalculator, RatioSummary
+from multi_modal_financial.data.cleaner import FinancialDataCleaner
+from multi_modal_financial.data.loader import BatchDocumentLoader
+from multi_modal_financial.data.synthetic import SyntheticFilingGenerator
+from multi_modal_financial.data.validator import (
+    FinancialTableValidator,
+    ReconciliationResult,
+    StatementReconciler,
+    ValidationIssue,
+    ValidationReport,
+)
+from multi_modal_financial.grounding.audit import GroundingAuditReport, GroundingAuditor
 from multi_modal_financial.indexing.hybrid import HybridIndex
+from multi_modal_financial.pipeline.orchestrator import (
+    FinancialPipelineOrchestrator,
+    OrchestratorConfig,
+)
 from multi_modal_financial.retrieval.fusion import HybridRetriever
+from multi_modal_financial.storage.cache import EmbeddingCache, QueryCache
+from multi_modal_financial.storage.persistence import IndexManifest, IndexPersistence
 from multi_modal_financial.types import (
     AgentQuery,
     AgentResponse,
@@ -57,4 +76,24 @@ __all__ = [
     "HybridIndex",
     "HybridRetriever",
     "FinancialRAGPipeline",
+    "FinancialDataCleaner",
+    "FinancialTableValidator",
+    "StatementReconciler",
+    "ValidationIssue",
+    "ValidationReport",
+    "ReconciliationResult",
+    "SyntheticFilingGenerator",
+    "BatchDocumentLoader",
+    "IndexPersistence",
+    "IndexManifest",
+    "EmbeddingCache",
+    "QueryCache",
+    "FinancialRatioCalculator",
+    "RatioSummary",
+    "PeriodComparator",
+    "VarianceResult",
+    "GroundingAuditor",
+    "GroundingAuditReport",
+    "FinancialPipelineOrchestrator",
+    "OrchestratorConfig",
 ]
