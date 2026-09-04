@@ -1,0 +1,19 @@
+target-version = "py310"
+line-length = 100
+
+[lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501", # line length handled by formatter
+    "B008", # function calls in argument defaults (Click options)
+]
+
+[lint.isort]
+known-first-party = ["multi_modal_financial"]
