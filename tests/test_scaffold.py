@@ -49,6 +49,7 @@ def test_types_and_table_markdown(sample_metadata: DocumentMetadata, sample_tabl
         table_data=sample_table,
     )
     assert chunk.modal_type == ModalType.TABLE
+    assert chunk.table_data is not None
     assert chunk.table_data.scale == "millions"
 
 
@@ -113,7 +114,9 @@ def test_bm25_index():
 def test_vector_and_hybrid_retrieval(sample_document: Document):
     """Test vector embedding search, hybrid index, and retriever."""
     v_index = DenseVectorIndex(dimension=64)
-    v_index.fit(["c1", "c2"], ["Apple smartphones and computers", "Operating income statement table"])
+    v_index.fit(
+        ["c1", "c2"], ["Apple smartphones and computers", "Operating income statement table"]
+    )
     v_results = v_index.search("computers hardware")
     assert len(v_results) > 0
     assert v_results[0][0] == "c1"

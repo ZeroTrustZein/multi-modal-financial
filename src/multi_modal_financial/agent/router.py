@@ -3,32 +3,40 @@
 from __future__ import annotations
 
 import re
-from enum import Enum
 from typing import Any
 
-from multi_modal_financial.types import AgentQuery, ModalType
-
-
-class QueryIntent(str, Enum):
-    """Classified intent of a financial query."""
-    METRIC_LOOKUP = "metric_lookup"
-    COMPARATIVE_ANALYSIS = "comparative_analysis"
-    QUALITATIVE_RISK = "qualitative_risk"
-    TREND_CALCULATION = "trend_calculation"
-    GENERAL = "general"
+from multi_modal_financial.types import AgentQuery, ModalType, QueryIntent
 
 
 class QueryRouter:
     """Extracts financial entities and routes query to optimal retrieval modality."""
 
     TICKER_PATTERN = re.compile(r"\b[A-Z]{1,5}\b")
-    PERIOD_PATTERN = re.compile(r"\b(Q[1-4]|FY|FY\d{2,4}|10-[KQ]|annual|quarterly)\b", re.IGNORECASE)
+    PERIOD_PATTERN = re.compile(
+        r"\b(Q[1-4]|FY|FY\d{2,4}|10-[KQ]|annual|quarterly)\b", re.IGNORECASE
+    )
     YEAR_PATTERN = re.compile(r"\b(20\d{2}|19\d{2})\b")
 
     KNOWN_FINANCIAL_WORDS = {
-        "revenue", "ebitda", "margin", "income", "profit", "eps", "diluted",
-        "cash", "flow", "capex", "debt", "equity", "guidance", "dividend",
-        "operating", "gross", "net", "sales", "earnings"
+        "revenue",
+        "ebitda",
+        "margin",
+        "income",
+        "profit",
+        "eps",
+        "diluted",
+        "cash",
+        "flow",
+        "capex",
+        "debt",
+        "equity",
+        "guidance",
+        "dividend",
+        "operating",
+        "gross",
+        "net",
+        "sales",
+        "earnings",
     }
 
     def route(self, query_str: str) -> dict[str, Any]:
@@ -64,7 +72,11 @@ class QueryRouter:
         ticker: str | None = None
         for tok in tokens:
             cleaned = re.sub(r"[^A-Za-z]", "", tok)
-            if cleaned.isupper() and 1 <= len(cleaned) <= 5 and cleaned not in {"A", "I", "IN", "ON", "OF", "THE", "Q1", "Q2", "Q3", "Q4", "FY"}:
+            if (
+                cleaned.isupper()
+                and 1 <= len(cleaned) <= 5
+                and cleaned not in {"A", "I", "IN", "ON", "OF", "THE", "Q1", "Q2", "Q3", "Q4", "FY"}
+            ):
                 ticker = cleaned
                 break
 
