@@ -7,10 +7,7 @@ import re
 from collections import Counter
 from typing import Any
 
-
-_PAREN_CLEAN_PATTERN = re.compile(
-    r"\(([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?(?:[MBKmbk%])?)\)"
-)
+_PAREN_CLEAN_PATTERN = re.compile(r"\(([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?(?:[MBKmbk%])?)\)")
 _TOKEN_PATTERN = re.compile(
     r"\$?-?[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?%?(?:[a-zA-Z])?|[a-zA-Z0-9_\-]+"
 )

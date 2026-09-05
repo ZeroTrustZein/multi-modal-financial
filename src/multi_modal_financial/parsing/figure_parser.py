@@ -13,21 +13,13 @@ class FigureParser:
     X_AXIS_PATTERN = re.compile(
         r"(?:x-axis|horizontal\s+axis|x)\s*[:=]\s*([^\n,;]+)", re.IGNORECASE
     )
-    Y_AXIS_PATTERN = re.compile(
-        r"(?:y-axis|vertical\s+axis|y)\s*[:=]\s*([^\n,;]+)", re.IGNORECASE
-    )
-    CAPTION_PATTERN = re.compile(
-        r"(?:Figure|Chart)\s*\d*[:\-–]\s*([^\n]+)", re.IGNORECASE
-    )
-    BRACKET_CAPTION_PATTERN = re.compile(
-        r"\[Figure[^:]*:\s*([^\]]+)\]", re.IGNORECASE
-    )
+    Y_AXIS_PATTERN = re.compile(r"(?:y-axis|vertical\s+axis|y)\s*[:=]\s*([^\n,;]+)", re.IGNORECASE)
+    CAPTION_PATTERN = re.compile(r"(?:Figure|Chart)\s*\d*[:\-–]\s*([^\n]+)", re.IGNORECASE)
+    BRACKET_CAPTION_PATTERN = re.compile(r"\[Figure[^:]*:\s*([^\]]+)\]", re.IGNORECASE)
     KV_PATTERN = re.compile(
         r"^([A-Za-z0-9_\s\-/&]+)[:=]\s*\$?([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)\s*(?:M|B|K|%)?"
     )
-    FALLBACK_KV_PATTERN = re.compile(
-        r"([A-Za-z0-9_\s]+):\s*\$?([0-9]+(?:\.[0-9]+)?)"
-    )
+    FALLBACK_KV_PATTERN = re.compile(r"([A-Za-z0-9_\s]+):\s*\$?([0-9]+(?:\.[0-9]+)?)")
 
     @staticmethod
     def detect_chart_type(text: str) -> str:

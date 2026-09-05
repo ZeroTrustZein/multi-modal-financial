@@ -483,6 +483,7 @@ class TestPipelineOrchestratorEdgeCases:
         resp2 = orch.run_query(q, use_cache=True)
 
         assert resp1.answer == resp2.answer
+        assert orch.query_cache is not None
         assert orch.query_cache.hits == 1
         assert len(orch.query_cache._cache) == 1
 

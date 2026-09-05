@@ -6,11 +6,15 @@ from pathlib import Path
 
 import click
 from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
 
 from multi_modal_financial import __version__
 from multi_modal_financial.agent.pipeline import FinancialRAGPipeline
+from multi_modal_financial.cli.formatters import (
+    format_architecture_table,
+    format_benchmark_table,
+    format_citations_table,
+    format_response_panel,
+)
 from multi_modal_financial.types import AgentQuery
 
 console = Console()
@@ -26,40 +30,7 @@ def cli():
 @cli.command()
 def info():
     """Display pipeline configuration and environment details."""
-    table = Table(title="Multi-Modal Financial RAG - Architecture")
-    table.add_column("Component", style="cyan", no_wrap=True)
-    table.add_column("Implementation", style="green")
-    table.add_column("Description", style="white")
-
-    table.add_row(
-        "Parser",
-        "FinancialDocumentParser",
-        "Extracts text, markdown tables, and figures from PDFs/text",
-    )
-    table.add_row(
-        "Sparse Index",
-        "BM25 Okapi",
-        "Financial-tuned tokenization preserving tickers, currencies, %",
-    )
-    table.add_row(
-        "Dense Index",
-        "DenseVectorIndex",
-        "Deterministic projection / embedding cosine similarity search",
-    )
-    table.add_row(
-        "Fusion", "HybridRetriever", "Reciprocal Rank Fusion (RRF) & convex alpha score blending"
-    )
-    table.add_row(
-        "Reranker",
-        "FinancialReranker",
-        "Financial term overlap, number matching, and table weighting",
-    )
-    table.add_row(
-        "Grounding",
-        "GroundingVerifier",
-        "Numerical verification, claim attribution, and citation checks",
-    )
-
+    table = format_architecture_table()
     console.print(table)
 
 
@@ -122,18 +93,8 @@ def query(query_text: str, ticker: str | None, top_k: int, alpha: float):
 
     resp = pipeline.query(agent_q)
 
-    console.print(Panel(resp.answer, title=f"Synthesized Response ({resp.execution_time_ms} ms)"))
-
-    table = Table(title="Citations & Grounding")
-    table.add_column("Citation ID", style="cyan")
-    table.add_column("Doc ID", style="magenta")
-    table.add_column("Modality", style="green")
-    table.add_column("Confidence", style="yellow")
-
-    for cite in resp.citations:
-        table.add_row(cite.citation_id, cite.doc_id, str(cite.modal_type), f"{cite.confidence:.2f}")
-
-    console.print(table)
+    console.print(format_response_panel(resp.answer, resp.execution_time_ms))
+    console.print(format_citations_table(resp.citations))
 
 
 @cli.command()
@@ -180,11 +141,6 @@ def benchmark():
 
     console.print("\n[bold]Running Retrieval Benchmark...[/bold]\n")
 
-    table = Table(title="Benchmark Results (Recall@1 & MRR)")
-    table.add_column("Method", style="cyan")
-    table.add_column("Recall@1", style="green")
-    table.add_column("MRR", style="yellow")
-
     # Evaluate BM25
     bm25_correct = 0
     mrr_bm25 = 0.0
@@ -212,15 +168,12 @@ def benchmark():
             mrr_hybrid += 1.0 / rank
 
     total = len(test_queries)
-    table.add_row(
-        "BM25 (Sparse)", f"{(bm25_correct / total) * 100:.1f}%", f"{mrr_bm25 / total:.3f}"
+    table = format_benchmark_table(
+        bm25_r1=bm25_correct / total,
+        bm25_mrr=mrr_bm25 / total,
+        hybrid_r1=hybrid_correct / total,
+        hybrid_mrr=mrr_hybrid / total,
     )
-    table.add_row(
-        "Hybrid RRF + Reranker",
-        f"{(hybrid_correct / total) * 100:.1f}%",
-        f"{mrr_hybrid / total:.3f}",
-    )
-
     console.print(table)
 
 
