@@ -145,10 +145,10 @@ def benchmark():
     bm25_correct = 0
     mrr_bm25 = 0.0
     for q, target in test_queries:
-        res = pipeline.retriever.retrieve(
+        bm25_res = pipeline.retriever.retrieve(
             AgentQuery(query_str=q, top_k=3, alpha=0.0), use_rrf=False
         )
-        rank = next((i + 1 for i, item in enumerate(res) if item.chunk.doc_id == target), 0)
+        rank = next((i + 1 for i, item in enumerate(bm25_res) if item.chunk.doc_id == target), 0)
         if rank == 1:
             bm25_correct += 1
         if rank > 0:
@@ -158,9 +158,14 @@ def benchmark():
     hybrid_correct = 0
     mrr_hybrid = 0.0
     for q, target in test_queries:
-        res = pipeline.query(q, top_k=3)
+        hybrid_resp = pipeline.query(q, top_k=3)
         rank = next(
-            (i + 1 for i, item in enumerate(res.retrieved_chunks) if item.chunk.doc_id == target), 0
+            (
+                i + 1
+                for i, item in enumerate(hybrid_resp.retrieved_chunks)
+                if item.chunk.doc_id == target
+            ),
+            0,
         )
         if rank == 1:
             hybrid_correct += 1

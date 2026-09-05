@@ -185,6 +185,7 @@ class TestParsingEdgeCases:
         Services: 150.0
         """
         fig = FigureParser.parse_figure_block(bracket_text, figure_id="fig_bracket")
+        assert fig.caption is not None
         assert fig.caption.rstrip("]") == "Global Segment Revenue Distribution"
         assert len(fig.data_points) == 3
         assert fig.data_points["Cloud"] == 450.0
@@ -263,11 +264,13 @@ class TestIndexingEdgeCases:
         v_index = DenseVectorIndex(dimension=dim)
         precomputed = np.random.randn(2, dim).astype(np.float32)
         v_index.fit(["c1", "c2"], ["text1", "text2"], precomputed_vectors=precomputed)
+        assert v_index.vectors is not None
         assert v_index.vectors.shape == (2, dim)
 
         # Add documents with precomputed
         new_vecs = np.random.randn(1, dim).astype(np.float32)
         v_index.add_documents(["c3"], ["text3"], precomputed_vectors=new_vecs)
+        assert v_index.vectors is not None
         assert v_index.vectors.shape == (3, dim)
 
 

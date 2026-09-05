@@ -12,6 +12,7 @@ import json
 import time
 from pathlib import Path
 
+import numpy as np
 import pypdf
 import pytest
 
@@ -218,9 +219,9 @@ class TestFullLifecycleIntegration:
         """Test embedding and query caches with eviction and TTL expiration."""
         # Embedding Cache
         emb_cache = EmbeddingCache(max_size=2)
-        v1 = [1.0, 0.0]
-        v2 = [0.0, 1.0]
-        v3 = [0.5, 0.5]
+        v1 = np.array([1.0, 0.0], dtype=np.float32)
+        v2 = np.array([0.0, 1.0], dtype=np.float32)
+        v3 = np.array([0.5, 0.5], dtype=np.float32)
 
         emb_cache.put("text1", v1)
         emb_cache.put("text2", v2)

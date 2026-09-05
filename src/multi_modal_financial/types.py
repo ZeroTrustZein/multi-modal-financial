@@ -327,6 +327,7 @@ class DocumentMetadata(BaseFinancialModel):
 class TableData(BaseFinancialModel):
     """Structured representation of a financial table."""
 
+    table_id: str | None = None
     headers: list[str] = Field(default_factory=list)
     rows: list[list[str]] = Field(default_factory=list)
     title: str | None = None
@@ -652,6 +653,7 @@ class GroundingVerdict(BaseFinancialModel):
     support_score: float  # [0.0, 1.0]
     status: GroundingStatus = GroundingStatus.FULLY_SUPPORTED
     unsupported_numbers: list[str] = Field(default_factory=list)
+    missing_entities: list[str] = Field(default_factory=list)
     reasoning: str = ""
 
 
