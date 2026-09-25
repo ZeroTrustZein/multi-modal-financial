@@ -30,7 +30,8 @@ from multi_modal_financial.pipeline.orchestrator import (
     OrchestratorConfig,
 )
 from multi_modal_financial.retrieval.fusion import HybridRetriever
-from multi_modal_financial.storage.cache import EmbeddingCache, QueryCache
+from multi_modal_financial.retrieval.reranker import FinancialCrossEncoder, FinancialReranker
+from multi_modal_financial.storage.cache import EmbeddingCache, QueryCache, SemanticCache
 from multi_modal_financial.storage.persistence import IndexManifest, IndexPersistence
 from multi_modal_financial.types import (
     AgentQuery,
@@ -113,6 +114,8 @@ __all__ = [
     "ExtractionFilter",
     "HybridIndex",
     "HybridRetriever",
+    "FinancialCrossEncoder",
+    "FinancialReranker",
     "FinancialRAGPipeline",
     "FinancialDataCleaner",
     "FinancialTableValidator",
@@ -126,6 +129,7 @@ __all__ = [
     "IndexManifest",
     "EmbeddingCache",
     "QueryCache",
+    "SemanticCache",
     "FinancialRatioCalculator",
     "RatioSummary",
     "PeriodComparator",

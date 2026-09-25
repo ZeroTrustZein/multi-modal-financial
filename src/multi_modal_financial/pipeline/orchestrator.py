@@ -19,11 +19,12 @@ from multi_modal_financial.grounding.verifier import GroundingVerifier
 from multi_modal_financial.indexing.hybrid import HybridIndex
 from multi_modal_financial.retrieval.fusion import HybridRetriever
 from multi_modal_financial.retrieval.reranker import FinancialReranker
-from multi_modal_financial.storage.cache import EmbeddingCache, QueryCache
+from multi_modal_financial.storage.cache import EmbeddingCache, QueryCache, SemanticCache
 from multi_modal_financial.storage.persistence import IndexPersistence
 from multi_modal_financial.types import (
     AgentQuery,
     AgentResponse,
+    CacheHitType,
     Document,
     RerankerConfig,
     SemanticCacheConfig,
@@ -76,6 +77,11 @@ class FinancialPipelineOrchestrator:
             if self.config.enable_query_cache
             else None
         )
+        self.semantic_cache = (
+            SemanticCache(config=self.config.semantic_cache_config)
+            if self.config.enable_semantic_cache
+            else None
+        )
 
         # Storage & Persistence
         self.persistence = IndexPersistence()
@@ -83,7 +89,7 @@ class FinancialPipelineOrchestrator:
         # Indexing & Search
         self.index = index or HybridIndex()
         self.retriever = HybridRetriever(self.index)
-        self.reranker = FinancialReranker()
+        self.reranker = FinancialReranker(config=self.config.reranker_config)
         self.router = QueryRouter()
         self.verifier = GroundingVerifier(confidence_threshold=self.config.confidence_threshold)
 
@@ -173,13 +179,29 @@ class FinancialPipelineOrchestrator:
             )
             cached_resp = self.query_cache.get(cache_key)
             if cached_resp is not None:
+                cached_resp.cache_hit = True
+                cached_resp.cache_type = CacheHitType.EXACT
+                return cached_resp
+
+        # Check semantic cache if query_cache missed or was bypassed
+        if use_cache and self.semantic_cache is not None and getattr(agent_q, "use_semantic_cache", True):
+            sim_threshold = getattr(agent_q, "similarity_threshold", None)
+            cache_lookup = self.semantic_cache.get(agent_q.query_str, similarity_threshold=sim_threshold)
+            if cache_lookup is not None and cache_lookup.hit and cache_lookup.response is not None:
+                cached_resp = cache_lookup.response.model_copy(deep=True)
+                cached_resp.cache_hit = True
+                cached_resp.cache_type = cache_lookup.hit_type
+                cached_resp.cache_similarity = cache_lookup.similarity
                 return cached_resp
 
         # Run RAG execution
-        resp = self.rag_pipeline.query(agent_q, top_k=agent_q.top_k, use_reranker=True)
+        resp = self.rag_pipeline.query(agent_q, top_k=agent_q.top_k, use_reranker=agent_q.use_reranker)
 
         if use_cache and self.query_cache is not None and cache_key:
             self.query_cache.put(cache_key, resp)
+
+        if use_cache and self.semantic_cache is not None and getattr(agent_q, "use_semantic_cache", True):
+            self.semantic_cache.put(agent_q.query_str, resp)
 
         return resp
 
@@ -227,6 +249,8 @@ class FinancialPipelineOrchestrator:
         self.retriever = self.rag_pipeline.retriever
         if self.query_cache:
             self.query_cache.clear()
+        if self.semantic_cache:
+            self.semantic_cache.clear()
 
     def status(self) -> dict[str, Any]:
         """Summary diagnostics of the pipeline and subsystems."""
@@ -238,5 +262,6 @@ class FinancialPipelineOrchestrator:
             "vector_dimension": self.index.vector.dimension,
             "query_cache": self.query_cache.stats() if self.query_cache else None,
             "embedding_cache": self.embedding_cache.stats() if self.embedding_cache else None,
+            "semantic_cache": self.semantic_cache.stats().to_dict() if self.semantic_cache else None,
         }
         return stats

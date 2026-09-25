@@ -289,14 +289,20 @@ class FinancialReranker:
 
         # Filter by threshold if configured
         if self.config.score_threshold > 0.0:
-            filtered = [r for r in scored_records if r[1] >= self.config.score_threshold]
-            if filtered:
-                scored_records = filtered
+            scored_records = [r for r in scored_records if r[1] >= self.config.score_threshold]
+            if not scored_records:
+                self.last_explanations = []
+                return []
 
         # Sort descending by composite final score
         scored_records.sort(key=lambda r: r[1], reverse=True)
 
-        limit = top_k if top_k is not None else (query.top_k if isinstance(query, AgentQuery) else len(scored_records))
+        effective_top_k = (
+            top_k
+            if top_k is not None
+            else (query.top_k if isinstance(query, AgentQuery) else self.config.top_k)
+        )
+        limit = min(effective_top_k, len(scored_records))
         top_records = scored_records[:limit]
 
         final_chunks: list[ScoredChunk] = []

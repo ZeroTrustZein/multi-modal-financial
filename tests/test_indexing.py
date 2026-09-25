@@ -8,6 +8,7 @@ import pytest
 from multi_modal_financial.indexing.bm25 import BM25Index
 from multi_modal_financial.indexing.hybrid import HybridIndex
 from multi_modal_financial.indexing.vector import DenseVectorIndex
+from multi_modal_financial.interfaces import DenseIndexProtocol, SparseIndexProtocol
 from multi_modal_financial.types import (
     Chunk,
     Document,
@@ -158,3 +159,23 @@ class TestHybridIndex:
             statement_type=FinancialStatementType.INCOME_STATEMENT
         )
         assert statement_chunks == ["chk_aapl_1"]
+
+
+class TestIndexProtocols:
+    """Unit tests for DenseIndexProtocol and SparseIndexProtocol conformance."""
+
+    def test_dense_vector_index_protocol(self) -> None:
+        idx = DenseVectorIndex(dimension=16)
+        assert isinstance(idx, DenseIndexProtocol)
+        idx.add("c1", "revenue growth", vector=[0.1] * 16)
+        results = idx.search([0.1] * 16, top_k=1)
+        assert len(results) == 1
+        assert results[0][0] == "c1"
+
+    def test_bm25_index_protocol(self) -> None:
+        idx = BM25Index()
+        assert isinstance(idx, SparseIndexProtocol)
+        idx.add("c1", "operating income and expenses")
+        results = idx.search("operating income", top_k=1)
+        assert len(results) == 1
+        assert results[0][0] == "c1"

@@ -226,7 +226,10 @@ class SemanticCache:
                 self._exact_index.pop(norm_q, None)
 
     def get(
-        self, query: str, query_vector: list[float] | None = None
+        self,
+        query: str,
+        query_vector: list[float] | None = None,
+        similarity_threshold: float | None = None,
     ) -> SemanticCacheLookupResult | None:
         """Lookup cached response using exact match fast path then vector similarity matching."""
         if not self.config.enabled:
@@ -285,7 +288,13 @@ class SemanticCache:
         latency = (time.perf_counter() - t0) * 1000.0
         self._total_latency_ms += latency
 
-        if best_entry is not None and best_sim >= self.config.similarity_threshold:
+        threshold = (
+            similarity_threshold
+            if similarity_threshold is not None
+            else self.config.similarity_threshold
+        )
+
+        if best_entry is not None and best_sim >= threshold:
             best_entry.touch(current_time=now)
             self._semantic_hits += 1
             return SemanticCacheLookupResult(
