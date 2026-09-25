@@ -169,12 +169,15 @@ def format_cache_stats_table(stats: SemanticCacheStats | dict[str, Any]) -> Tabl
 
     data = stats.to_dict() if isinstance(stats, SemanticCacheStats) else stats
 
-    lookups = data.get("total_lookups", 0)
+    lookups = data.get("total_lookups", data.get("total_queries", 0))
     exact = data.get("exact_hits", 0)
     semantic = data.get("semantic_hits", 0)
     misses = data.get("misses", 0)
-    hit_rate = data.get("hit_rate_pct", 0.0)
-    entries = data.get("total_entries", 0)
+    hit_rate = data.get(
+        "hit_rate_pct",
+        (data.get("hit_rate", 0.0) * 100.0) if "hit_rate" in data else 0.0,
+    )
+    entries = data.get("total_entries", data.get("entry_count", 0))
     max_entries = data.get("max_entries", 0)
     evictions = data.get("evictions", 0)
     expired = data.get("expired_count", 0)
@@ -184,7 +187,9 @@ def format_cache_stats_table(stats: SemanticCacheStats | dict[str, Any]) -> Tabl
     table.add_row("Semantic Hits", str(semantic), "Vector similarity threshold matches")
     table.add_row("Cache Misses", str(misses), "Queries forwarded to full retrieval pipeline")
     table.add_row("Hit Rate", f"{hit_rate:.1f}%", "Overall cache efficiency (hits / lookups)")
-    table.add_row("Active Entries", f"{entries} / {max_entries}", "Current occupancy vs maximum capacity")
+    table.add_row(
+        "Active Entries", f"{entries} / {max_entries}", "Current occupancy vs maximum capacity"
+    )
     table.add_row("Evictions", str(evictions), "Entries evicted under configured policy")
     table.add_row("Expired", str(expired), "Entries invalidated by TTL expiration")
     return table
@@ -288,7 +293,11 @@ def format_audit_table(report: GroundingAuditReport) -> Table:
     table.add_row("Total Queries Audited", str(report.total_queries), "Complete batch")
     table.add_row("Total Claims Evaluated", str(report.total_claims), "Extracted propositions")
     table.add_row("Supported Claims", str(report.supported_claims), "Fully grounded")
-    table.add_row("Partially Supported", str(report.partially_supported_claims), "Contains ungrounded elements")
+    table.add_row(
+        "Partially Supported",
+        str(report.partially_supported_claims),
+        "Contains ungrounded elements",
+    )
     table.add_row("Unsupported Claims", str(report.unsupported_claims), "Hallucinations detected")
     table.add_row(
         "Hallucination Rate",
@@ -330,4 +339,3 @@ def format_benchmark_table(
         f"{hybrid_mrr:.3f}",
     )
     return table
-

@@ -167,7 +167,10 @@ class TestFinancialCrossEncoder:
     def test_predict_scoring(self) -> None:
         encoder = FinancialCrossEncoder()
         pairs = [
-            ("operating revenue for 2025", "Operating revenue reached $150,000 million in fiscal year 2025."),
+            (
+                "operating revenue for 2025",
+                "Operating revenue reached $150,000 million in fiscal year 2025.",
+            ),
             ("operating revenue for 2025", "The weather was sunny in Seattle yesterday afternoon."),
         ]
         scores = encoder.predict(pairs)
@@ -179,6 +182,28 @@ class TestFinancialCrossEncoder:
     def test_predict_empty_pairs(self) -> None:
         encoder = FinancialCrossEncoder()
         assert encoder.predict([]) == []
+
+    def test_predict_empty_and_punctuation_pairs(self) -> None:
+        encoder = FinancialCrossEncoder()
+        pairs = [
+            ("", "Some financial content"),
+            ("Valid query", ""),
+            ("??? !!!", "$$$ @@@"),
+        ]
+        scores = encoder.predict(pairs)
+        assert len(scores) == 3
+        assert scores[0] == 0.0
+        assert scores[1] == 0.0
+        assert scores[2] == 0.0
+
+    def test_predict_numerical_congruence(self) -> None:
+        encoder = FinancialCrossEncoder()
+        pairs = [
+            ("Revenue in 2025 was $391,035", "Revenue was reported at $391,035 in 2025."),
+            ("Revenue in 2025 was $391,035", "Revenue was reported at $120,000 in 2021."),
+        ]
+        scores = encoder.predict(pairs)
+        assert scores[0] > scores[1]
 
 
 class TestFinancialRerankerExtended:
@@ -263,6 +288,19 @@ class TestFinancialRerankerExtended:
         assert reranker.rerank("Query", []) == []
         assert reranker.last_explanations == []
 
+    def test_figure_modality_boost_keywords(self) -> None:
+        c_fig = Chunk(
+            chunk_id="c_fig",
+            doc_id="doc1",
+            modal_type=ModalType.FIGURE,
+            content="Revenue trajectory from 2020 to 2025 shown as a bar chart.",
+        )
+        candidates = [ScoredChunk(chunk=c_fig, score=0.5, rank=1)]
+        reranker = FinancialReranker()
+        res = reranker.rerank("Show revenue trend chart", candidates)
+        assert len(res) == 1
+        assert any("Figure modality boost" in r for r in reranker.last_explanations[0].reasons)
+
 
 class TestHybridRetrieverStrategies:
     """Unit tests for HybridRetriever with different RetrievalStrategy modes."""
@@ -298,13 +336,17 @@ class TestHybridRetrieverStrategies:
         assert hits[0].dense_score != 0.0
 
     def test_sparse_only_strategy(self, setup_retriever: HybridRetriever) -> None:
-        hits = setup_retriever.retrieve("research and development", strategy=RetrievalStrategy.SPARSE)
+        hits = setup_retriever.retrieve(
+            "research and development", strategy=RetrievalStrategy.SPARSE
+        )
         assert len(hits) > 0
         assert hits[0].sparse_score > 0.0
         assert hits[0].chunk.chunk_id == "chunk_2"
 
     def test_convex_blend_strategy(self, setup_retriever: HybridRetriever) -> None:
-        hits = setup_retriever.retrieve("net sales", strategy=RetrievalStrategy.HYBRID_CONVEX, alpha=0.8)
+        hits = setup_retriever.retrieve(
+            "net sales", strategy=RetrievalStrategy.HYBRID_CONVEX, alpha=0.8
+        )
         assert len(hits) > 0
         assert hits[0].rank == 1
 
@@ -312,3 +354,21 @@ class TestHybridRetrieverStrategies:
         hits = setup_retriever.retrieve("Total net sales", top_k=1)
         assert len(hits) == 1
         assert hits[0].chunk.chunk_id == "chunk_1"
+
+    def test_score_threshold_filtering(self, setup_retriever: HybridRetriever) -> None:
+        cfg = HybridSearchConfig(strategy=RetrievalStrategy.DENSE, score_threshold=0.99)
+        setup_retriever.config = cfg
+        hits = setup_retriever.retrieve("unrelated random text")
+        for h in hits:
+            assert h.score >= 0.99
+
+    def test_allowed_ids_filtering(self, setup_retriever: HybridRetriever) -> None:
+        q = AgentQuery(query_str="net sales", modal_filter=ModalType.TABLE)
+        hits = setup_retriever.retrieve(q, strategy=RetrievalStrategy.SPARSE)
+        assert hits == []
+
+    def test_default_config_strategy(self, setup_retriever: HybridRetriever) -> None:
+        setup_retriever.config = HybridSearchConfig(strategy=RetrievalStrategy.SPARSE)
+        hits = setup_retriever.retrieve(AgentQuery(query_str="operating expenses", use_rrf=None))
+        assert len(hits) > 0
+        assert hits[0].chunk.chunk_id == "chunk_2"

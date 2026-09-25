@@ -116,7 +116,9 @@ class TestFinancialRAGPipeline:
         assert exp.final_rank == 1
         assert len(exp.reasons) > 0
 
-    def test_orchestrator_semantic_cache_integration(self, rag_pipeline: FinancialRAGPipeline) -> None:
+    def test_orchestrator_semantic_cache_integration(
+        self, rag_pipeline: FinancialRAGPipeline
+    ) -> None:
         orch = FinancialPipelineOrchestrator(index=rag_pipeline.index)
 
         # First query: cold lookup, cache miss

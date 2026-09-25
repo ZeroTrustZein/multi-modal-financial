@@ -11,13 +11,11 @@ from multi_modal_financial.pipeline.orchestrator import (
 )
 from multi_modal_financial.types import (
     AgentQuery,
-    CacheHitType,
     HybridSearchConfig,
     RerankerConfig,
     RerankerStrategy,
     RetrievalBenchmarkResult,
     RetrievalStrategy,
-    SemanticCacheConfig,
 )
 
 
@@ -168,7 +166,9 @@ class TestFinancialPipelineOrchestrator:
         with pytest.raises(ValueError, match="persistence_dir is not configured"):
             orch_no_dir.checkpoint()
 
-    def test_orchestrator_save_and_load_semantic_cache(self, setup_sample_corpus: Path, tmp_path: Path):
+    def test_orchestrator_save_and_load_semantic_cache(
+        self, setup_sample_corpus: Path, tmp_path: Path
+    ):
         orch = FinancialPipelineOrchestrator()
         orch.ingest_files(setup_sample_corpus)
 

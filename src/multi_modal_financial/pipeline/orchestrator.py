@@ -190,9 +190,15 @@ class FinancialPipelineOrchestrator:
                 return cached_resp
 
         # Check semantic cache if query_cache missed or was bypassed
-        if use_cache and self.semantic_cache is not None and getattr(agent_q, "use_semantic_cache", True):
+        if (
+            use_cache
+            and self.semantic_cache is not None
+            and getattr(agent_q, "use_semantic_cache", True)
+        ):
             sim_threshold = getattr(agent_q, "similarity_threshold", None)
-            cache_lookup = self.semantic_cache.get(agent_q.query_str, similarity_threshold=sim_threshold)
+            cache_lookup = self.semantic_cache.get(
+                agent_q.query_str, similarity_threshold=sim_threshold
+            )
             if cache_lookup is not None and cache_lookup.hit and cache_lookup.response is not None:
                 cached_resp = cache_lookup.response.model_copy(deep=True)
                 cached_resp.cache_hit = True
@@ -201,12 +207,18 @@ class FinancialPipelineOrchestrator:
                 return cached_resp
 
         # Run RAG execution
-        resp = self.rag_pipeline.query(agent_q, top_k=agent_q.top_k, use_reranker=agent_q.use_reranker)
+        resp = self.rag_pipeline.query(
+            agent_q, top_k=agent_q.top_k, use_reranker=agent_q.use_reranker
+        )
 
         if use_cache and self.query_cache is not None and cache_key:
             self.query_cache.put(cache_key, resp)
 
-        if use_cache and self.semantic_cache is not None and getattr(agent_q, "use_semantic_cache", True):
+        if (
+            use_cache
+            and self.semantic_cache is not None
+            and getattr(agent_q, "use_semantic_cache", True)
+        ):
             self.semantic_cache.put(agent_q.query_str, resp)
 
         return resp
@@ -281,7 +293,7 @@ class FinancialPipelineOrchestrator:
 
     def benchmark_retrieval(
         self,
-        test_queries: list[tuple[AgentQuery | str, list[str]]],
+        test_queries: Sequence[tuple[AgentQuery | str, list[str]]],
         k: int = 5,
         use_rrf: bool = True,
     ) -> RetrievalBenchmarkResult:
@@ -305,7 +317,9 @@ class FinancialPipelineOrchestrator:
             "vector_dimension": self.index.vector.dimension,
             "query_cache": self.query_cache.stats() if self.query_cache else None,
             "embedding_cache": self.embedding_cache.stats() if self.embedding_cache else None,
-            "semantic_cache": self.semantic_cache.stats().to_dict() if self.semantic_cache else None,
+            "semantic_cache": self.semantic_cache.stats().to_dict()
+            if self.semantic_cache
+            else None,
             "reranker": {
                 "strategy": (
                     self.reranker.config.strategy.value

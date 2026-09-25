@@ -41,7 +41,12 @@ def cli():
 
 
 @cli.command()
-@click.option("--status", is_flag=True, default=False, help="Show live subsystem status and index diagnostics.")
+@click.option(
+    "--status",
+    is_flag=True,
+    default=False,
+    help="Show live subsystem status and index diagnostics.",
+)
 def info(status: bool):
     """Display pipeline configuration and environment details."""
     table = format_architecture_table()
@@ -100,10 +105,23 @@ def ingest(file_path: str, ticker: str | None, clean: bool, validate: bool):
     help="Reranking model strategy",
 )
 @click.option("--rerank/--no-rerank", default=True, help="Enable or disable neural reranking")
-@click.option("--reranker-top-k", default=None, type=int, help="Number of chunks to retain after reranking")
-@click.option("--reranker-threshold", default=0.0, type=float, help="Minimum score threshold for reranker")
-@click.option("--semantic-cache/--no-semantic-cache", default=True, help="Enable or disable semantic vector caching")
-@click.option("--explain", is_flag=True, default=False, help="Display reranking score and explanation breakdown")
+@click.option(
+    "--reranker-top-k", default=None, type=int, help="Number of chunks to retain after reranking"
+)
+@click.option(
+    "--reranker-threshold", default=0.0, type=float, help="Minimum score threshold for reranker"
+)
+@click.option(
+    "--semantic-cache/--no-semantic-cache",
+    default=True,
+    help="Enable or disable semantic vector caching",
+)
+@click.option(
+    "--explain",
+    is_flag=True,
+    default=False,
+    help="Display reranking score and explanation breakdown",
+)
 @click.option("--period", default=None, help="Filter by financial period (e.g. Q1, Q2, Q3, Q4, FY)")
 @click.option("--year", default=None, type=int, help="Filter by reporting fiscal year")
 def query(
@@ -232,7 +250,9 @@ def benchmark(top_k: int):
     mrr_bm25 = 0.0
     for q, target in test_queries:
         bm25_res = pipeline.retriever.retrieve(
-            AgentQuery(query_str=q, top_k=top_k, alpha=0.0, retrieval_strategy=RetrievalStrategy.SPARSE),
+            AgentQuery(
+                query_str=q, top_k=top_k, alpha=0.0, retrieval_strategy=RetrievalStrategy.SPARSE
+            ),
             use_rrf=False,
         )
         rank = next((i + 1 for i, item in enumerate(bm25_res) if item.chunk.doc_id == target), 0)
@@ -246,7 +266,9 @@ def benchmark(top_k: int):
     mrr_dense = 0.0
     for q, target in test_queries:
         dense_res = pipeline.retriever.retrieve(
-            AgentQuery(query_str=q, top_k=top_k, alpha=1.0, retrieval_strategy=RetrievalStrategy.DENSE),
+            AgentQuery(
+                query_str=q, top_k=top_k, alpha=1.0, retrieval_strategy=RetrievalStrategy.DENSE
+            ),
             use_rrf=False,
         )
         rank = next((i + 1 for i, item in enumerate(dense_res) if item.chunk.doc_id == target), 0)
@@ -327,7 +349,9 @@ def compare(file_path_base: str, file_path_compare: str):
 
 @cli.command("audit")
 @click.argument("queries", nargs=-1)
-@click.option("--max-hallucination-rate", default=0.05, type=float, help="Max tolerable hallucination rate")
+@click.option(
+    "--max-hallucination-rate", default=0.05, type=float, help="Max tolerable hallucination rate"
+)
 def audit(queries: tuple[str, ...], max_hallucination_rate: float):
     """Run factual grounding compliance audit across a batch of financial queries."""
     orchestrator = FinancialPipelineOrchestrator(
@@ -343,14 +367,17 @@ def audit(queries: tuple[str, ...], max_hallucination_rate: float):
     orchestrator.rag_pipeline.ingest_text(
         sample_text, doc_id="acme_q3_2025", ticker="ACM", period="Q3", year=2025
     )
-    query_list = list(queries) if queries else [
-        "What was revenue for ACM in Q3?",
-        "What was gross profit and operating income?",
-    ]
+    query_list = (
+        list(queries)
+        if queries
+        else [
+            "What was revenue for ACM in Q3?",
+            "What was gross profit and operating income?",
+        ]
+    )
     report = orchestrator.audit_queries(query_list)
     console.print(format_audit_table(report))
 
 
 if __name__ == "__main__":
     cli()
-

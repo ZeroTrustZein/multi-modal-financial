@@ -118,9 +118,7 @@ class FinancialRAGPipeline:
         rerank_explanations = []
         if use_reranker:
             rerank_k = getattr(agent_query, "reranker_top_k", None) or agent_query.top_k
-            final_candidates = self.reranker.rerank(
-                agent_query, scored_candidates, top_k=rerank_k
-            )
+            final_candidates = self.reranker.rerank(agent_query, scored_candidates, top_k=rerank_k)
             if hasattr(self.reranker, "last_explanations"):
                 rerank_explanations = list(self.reranker.last_explanations)
         else:

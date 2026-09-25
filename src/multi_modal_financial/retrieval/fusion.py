@@ -135,7 +135,9 @@ class HybridRetriever:
                 sparse_hits = [h for h in sparse_hits if h[0] in allowed_ids]
             s_scores = [h[1] for h in sparse_hits]
             norm_s = min_max_normalize(s_scores)
-            for rank, ((cid, raw_s), norm_score) in enumerate(zip(sparse_hits, norm_s, strict=False)):
+            for rank, ((cid, raw_s), norm_score) in enumerate(
+                zip(sparse_hits, norm_s, strict=False)
+            ):
                 chunk = self.index.get_chunk(cid)
                 if not chunk:
                     continue

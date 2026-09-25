@@ -257,7 +257,6 @@ class TestCLI:
         )
         from multi_modal_financial.grounding.audit import GroundingAuditReport
         from multi_modal_financial.types import (
-            CacheHitType,
             RerankExplanation,
             SemanticCacheStats,
         )
@@ -279,15 +278,15 @@ class TestCLI:
 
         # 2. Cache stats table
         stats = SemanticCacheStats(
-            total_entries=5,
-            max_entries=100,
+            total_queries=10,
             exact_hits=2,
             semantic_hits=3,
             misses=5,
-            total_lookups=10,
-            hit_rate_pct=50.0,
             evictions=0,
-            expired_count=0,
+            entry_count=5,
+            max_entries=100,
+            hit_rate=0.5,
+            avg_lookup_latency_ms=1.2,
         )
         tbl_cache = format_cache_stats_table(stats)
         assert tbl_cache.title == "Semantic Cache Telemetry"
@@ -300,7 +299,7 @@ class TestCLI:
             current_ratio=2.0,
         )
         tbl_ratios = format_ratios_table(ratios, doc_id="TEST_DOC")
-        assert "TEST_DOC" in tbl_ratios.title
+        assert "TEST_DOC" in str(tbl_ratios.title)
 
         # 4. Comparison table
         variance = VarianceResult(
@@ -312,7 +311,7 @@ class TestCLI:
             trend="UP",
         )
         tbl_comp = format_comparison_table([variance], base_id="Q1", comp_id="Q2")
-        assert "Q1 vs Q2" in tbl_comp.title
+        assert "Q1 vs Q2" in str(tbl_comp.title)
 
         # 5. Audit table
         rep = GroundingAuditReport(

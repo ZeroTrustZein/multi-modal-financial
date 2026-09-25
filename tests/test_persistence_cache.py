@@ -229,6 +229,7 @@ class TestSemanticCache:
         assert res.hit is True
         assert res.hit_type == CacheHitType.EXACT
         assert res.similarity == 1.0
+        assert res.response is not None
         assert res.response.answer == sample_response.answer
         assert res.lookup_latency_ms >= 0.0
 
@@ -273,8 +274,10 @@ class TestSemanticCache:
         assert stats.entry_count == 2
         assert stats.evictions == 1
         # q2 should have been evicted
-        assert cache.get("q2").hit is False
-        assert cache.get("q1").hit is True
+        res_q2 = cache.get("q2")
+        res_q1 = cache.get("q1")
+        assert res_q2 is not None and res_q2.hit is False
+        assert res_q1 is not None and res_q1.hit is True
 
     def test_lfu_eviction(self, sample_response: AgentResponse) -> None:
         config = SemanticCacheConfig(max_entries=2, eviction_policy=CacheEvictionPolicy.LFU)
@@ -292,8 +295,10 @@ class TestSemanticCache:
 
         assert cache.stats().evictions == 1
         # query_a had access_count 1, query_b had 3 -> query_a evicted
-        assert cache.get("query_a").hit is False
-        assert cache.get("query_b").hit is True
+        res_qa = cache.get("query_a")
+        res_qb = cache.get("query_b")
+        assert res_qa is not None and res_qa.hit is False
+        assert res_qb is not None and res_qb.hit is True
 
     def test_fifo_eviction(self, sample_response: AgentResponse) -> None:
         import time
@@ -313,8 +318,10 @@ class TestSemanticCache:
         cache.put("third_in", sample_response)
 
         assert cache.stats().evictions == 1
-        assert cache.get("first_in").hit is False
-        assert cache.get("second_in").hit is True
+        res_first = cache.get("first_in")
+        res_second = cache.get("second_in")
+        assert res_first is not None and res_first.hit is False
+        assert res_second is not None and res_second.hit is True
 
     def test_ttl_expiration(self, sample_response: AgentResponse) -> None:
         import time
@@ -324,11 +331,13 @@ class TestSemanticCache:
         cache.put("short_lived", sample_response)
 
         # Immediately available
-        assert cache.get("short_lived").hit is True
+        res_early = cache.get("short_lived")
+        assert res_early is not None and res_early.hit is True
 
         # Wait for TTL to elapse
         time.sleep(0.03)
-        assert cache.get("short_lived").hit is False
+        res_late = cache.get("short_lived")
+        assert res_late is not None and res_late.hit is False
 
     def test_clear_and_stats_telemetry(self, sample_response: AgentResponse) -> None:
         cache = SemanticCache()
@@ -349,7 +358,9 @@ class TestSemanticCache:
         assert st_after.entry_count == 0
         assert st_after.hit_rate == 0.0
 
-    def test_save_and_load_semantic_cache(self, sample_response: AgentResponse, tmp_path: Path) -> None:
+    def test_save_and_load_semantic_cache(
+        self, sample_response: AgentResponse, tmp_path: Path
+    ) -> None:
         cache = SemanticCache()
         cache.put("Apple fiscal 2025 revenue", sample_response)
         cache.put("Microsoft Cloud revenue 2025", sample_response)
@@ -364,3 +375,89 @@ class TestSemanticCache:
         assert lookup is not None
         assert lookup.hit is True
         assert lookup.hit_type == CacheHitType.EXACT
+
+    def test_semantic_cache_disabled(self, sample_response: AgentResponse) -> None:
+        config = SemanticCacheConfig(enabled=False)
+        cache = SemanticCache(config=config)
+        cache.put("Query when disabled", sample_response)
+        assert len(cache._entries) == 0
+        assert cache.get("Query when disabled") is None
+
+    def test_semantic_cache_distance_metrics(self, sample_response: AgentResponse) -> None:
+        # 1. Euclidean distance
+        cfg_euc = SemanticCacheConfig(distance_metric="euclidean", similarity_threshold=0.5)
+        cache_euc = SemanticCache(config=cfg_euc)
+        sim_euc = cache_euc._compute_similarity([1.0, 0.0], [0.0, 1.0])
+        assert 0.0 < sim_euc < 1.0
+
+        # 2. Dot product
+        cfg_dot = SemanticCacheConfig(distance_metric="dot", similarity_threshold=0.5)
+        cache_dot = SemanticCache(config=cfg_dot)
+        sim_dot = cache_dot._compute_similarity([0.5, 0.5], [0.5, 0.5])
+        assert sim_dot == 0.5
+
+        # 3. Cosine distance with near-zero norm
+        cfg_cos = SemanticCacheConfig(distance_metric="cosine")
+        cache_cos = SemanticCache(config=cfg_cos)
+        sim_zero = cache_cos._compute_similarity([0.0, 0.0], [1.0, 1.0])
+        assert sim_zero == 0.0
+
+    def test_semantic_cache_expired_purge_on_put(self, sample_response: AgentResponse) -> None:
+        import time
+
+        config = SemanticCacheConfig(max_entries=2, ttl_seconds=0.02)
+        cache = SemanticCache(config=config)
+        cache.put("q_old1", sample_response)
+        cache.put("q_old2", sample_response)
+        assert len(cache._entries) == 2
+
+        time.sleep(0.03)
+        # Put third entry when previous 2 entries are expired
+        cache.put("q_new", sample_response)
+        # Expired entries should be purged, leaving only q_new
+        assert len(cache._entries) == 1
+        assert "q_new" in [e.query for e in cache._entries.values()]
+
+    def test_semantic_cache_update_existing_entry(self, sample_response: AgentResponse) -> None:
+        cache = SemanticCache()
+        cache.put("update_me", sample_response)
+        assert cache.stats().entry_count == 1
+
+        updated_resp = AgentResponse(
+            query="update_me",
+            answer="Updated Answer",
+            citations=[],
+            grounding_verdicts=[],
+            retrieved_chunks=[],
+            execution_time_ms=5.0,
+            overall_confidence=0.99,
+        )
+        cache.put("update_me", updated_resp)
+        assert cache.stats().entry_count == 1
+        res = cache.get("update_me")
+        assert res is not None and res.response is not None
+        assert res.response.answer == "Updated Answer"
+
+    def test_semantic_cache_missing_vector_skip(self, sample_response: AgentResponse) -> None:
+        cache = SemanticCache()
+        cache.put("entry_with_no_vec", sample_response)
+        # Manually clear vector to simulate missing vector entry
+        for e in cache._entries.values():
+            e.query_vector = []
+
+        res = cache.get("unseen query that scans")
+        assert res is not None and res.hit is False
+
+    def test_persistence_semantic_cache_errors(self, tmp_path: Path) -> None:
+        import pytest
+
+        # Missing file
+        missing_file = tmp_path / "missing_cache.json"
+        with pytest.raises(FileNotFoundError, match="Persisted cache not found"):
+            IndexPersistence.load_semantic_cache(missing_file)
+
+        # Subdirectory auto-creation in save_semantic_cache
+        deep_file = tmp_path / "nested" / "dir" / "cache.json"
+        cache = SemanticCache()
+        saved = IndexPersistence.save_semantic_cache(cache, deep_file)
+        assert saved.exists()

@@ -341,7 +341,9 @@ class SemanticCache:
         if len(self._entries) >= self.config.max_entries:
             # First purge expired entries
             expired_keys = [
-                k for k, e in self._entries.items() if e.is_expired(self.config.ttl_seconds, current_time=now)
+                k
+                for k, e in self._entries.items()
+                if e.is_expired(self.config.ttl_seconds, current_time=now)
             ]
             for exp_k in expired_keys:
                 self._delete_entry(exp_k)
@@ -350,11 +352,16 @@ class SemanticCache:
             if len(self._entries) >= self.config.max_entries:
                 evict_key: str | None = None
                 if self.config.eviction_policy == CacheEvictionPolicy.LRU:
-                    evict_key = min(self._entries.keys(), key=lambda k: self._entries[k].last_accessed_at)
+                    evict_key = min(
+                        self._entries.keys(), key=lambda k: self._entries[k].last_accessed_at
+                    )
                 elif self.config.eviction_policy == CacheEvictionPolicy.LFU:
                     evict_key = min(
                         self._entries.keys(),
-                        key=lambda k: (self._entries[k].access_count, self._entries[k].last_accessed_at),
+                        key=lambda k: (
+                            self._entries[k].access_count,
+                            self._entries[k].last_accessed_at,
+                        ),
                     )
                 elif self.config.eviction_policy == CacheEvictionPolicy.FIFO:
                     evict_key = min(self._entries.keys(), key=lambda k: self._entries[k].created_at)

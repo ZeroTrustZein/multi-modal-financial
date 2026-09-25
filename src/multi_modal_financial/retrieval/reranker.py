@@ -72,9 +72,7 @@ class FinancialCrossEncoder:
 
         # 1. Financial concept weighted term overlap
         weighted_overlap = sum(
-            self.FINANCIAL_CONCEPT_WEIGHTS.get(t, 1.0)
-            for t in q_set
-            if t in d_set
+            self.FINANCIAL_CONCEPT_WEIGHTS.get(t, 1.0) for t in q_set if t in d_set
         )
         total_q_weight = sum(self.FINANCIAL_CONCEPT_WEIGHTS.get(t, 1.0) for t in q_set)
         term_sim = (weighted_overlap / total_q_weight) if total_q_weight > 0 else 0.0
