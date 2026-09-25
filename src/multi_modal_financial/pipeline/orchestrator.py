@@ -21,7 +21,13 @@ from multi_modal_financial.retrieval.fusion import HybridRetriever
 from multi_modal_financial.retrieval.reranker import FinancialReranker
 from multi_modal_financial.storage.cache import EmbeddingCache, QueryCache
 from multi_modal_financial.storage.persistence import IndexPersistence
-from multi_modal_financial.types import AgentQuery, AgentResponse, Document
+from multi_modal_financial.types import (
+    AgentQuery,
+    AgentResponse,
+    Document,
+    RerankerConfig,
+    SemanticCacheConfig,
+)
 
 
 @dataclass
@@ -30,6 +36,7 @@ class OrchestratorConfig:
 
     enable_query_cache: bool = True
     enable_embedding_cache: bool = True
+    enable_semantic_cache: bool = True
     clean_text: bool = True
     validate_tables: bool = True
     default_top_k: int = 5
@@ -40,6 +47,8 @@ class OrchestratorConfig:
     confidence_threshold: float = 0.60
     max_hallucination_rate: float = 0.05
     persistence_dir: Path | None = None
+    semantic_cache_config: SemanticCacheConfig = field(default_factory=SemanticCacheConfig)
+    reranker_config: RerankerConfig = field(default_factory=RerankerConfig)
     extra_options: dict[str, Any] = field(default_factory=dict)
 
 

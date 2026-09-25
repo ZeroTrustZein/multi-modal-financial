@@ -5,9 +5,20 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from multi_modal_financial.interfaces import (
+    CrossEncoderProtocol,
+    DenseIndexProtocol,
+    RerankerProtocol,
+    RetrieverProtocol,
+    SemanticCacheProtocol,
+    SparseIndexProtocol,
+)
+from multi_modal_financial.pipeline.orchestrator import OrchestratorConfig
 from multi_modal_financial.types import (
     AgentQuery,
     AgentResponse,
+    CacheEvictionPolicy,
+    CacheHitType,
     Chunk,
     Citation,
     Currency,
@@ -20,11 +31,20 @@ from multi_modal_financial.types import (
     FinancialStatementType,
     GroundingStatus,
     GroundingVerdict,
+    HybridSearchConfig,
     ModalType,
     ProvenanceRecord,
     QueryIntent,
+    RerankerConfig,
+    RerankerStrategy,
+    RerankExplanation,
     RetrievalBenchmarkResult,
+    RetrievalStrategy,
     ScoredChunk,
+    SemanticCacheConfig,
+    SemanticCacheEntry,
+    SemanticCacheLookupResult,
+    SemanticCacheStats,
     TableData,
     UnitScale,
     scale_multiplier,
@@ -100,6 +120,31 @@ class TestEnums:
         assert GroundingStatus.PARTIALLY_SUPPORTED == "partially_supported"
         assert GroundingStatus.UNSUPPORTED == "unsupported"
         assert GroundingStatus.CONTRADICTED == "contradicted"
+
+    def test_reranker_strategy(self) -> None:
+        assert RerankerStrategy.HEURISTIC == "heuristic"
+        assert RerankerStrategy.CROSS_ENCODER == "cross_encoder"
+        assert RerankerStrategy.HYBRID == "hybrid"
+        assert issubclass(RerankerStrategy, str)
+
+    def test_retrieval_strategy(self) -> None:
+        assert RetrievalStrategy.DENSE == "dense"
+        assert RetrievalStrategy.SPARSE == "sparse"
+        assert RetrievalStrategy.HYBRID_RRF == "hybrid_rrf"
+        assert RetrievalStrategy.HYBRID_CONVEX == "hybrid_convex"
+        assert issubclass(RetrievalStrategy, str)
+
+    def test_cache_eviction_policy(self) -> None:
+        assert CacheEvictionPolicy.LRU == "lru"
+        assert CacheEvictionPolicy.LFU == "lfu"
+        assert CacheEvictionPolicy.FIFO == "fifo"
+        assert issubclass(CacheEvictionPolicy, str)
+
+    def test_cache_hit_type(self) -> None:
+        assert CacheHitType.EXACT == "exact"
+        assert CacheHitType.SEMANTIC == "semantic"
+        assert CacheHitType.NONE == "none"
+        assert issubclass(CacheHitType, str)
 
 
 class TestScaleMultiplier:
@@ -660,3 +705,412 @@ class TestSupportingTypes:
         d = flt.to_dict()
         rebuilt = ExtractionFilter.from_dict(d)
         assert rebuilt.year == 2025
+
+
+class TestRerankerTypes:
+    """Test RerankerConfig, RerankExplanation, and ScoredChunk reranking attributes."""
+
+    def test_reranker_config_defaults(self) -> None:
+        cfg = RerankerConfig()
+        assert cfg.strategy == RerankerStrategy.HYBRID
+        assert cfg.model_name == "cross-encoder/ms-marco-MiniLM-L-6-v2"
+        assert cfg.top_k == 10
+        assert cfg.score_threshold == 0.0
+        assert cfg.batch_size == 32
+        assert cfg.table_boost == 0.2
+        assert cfg.metric_boost == 0.25
+        assert cfg.figure_boost == 0.15
+        assert cfg.entity_boost == 0.2
+        assert cfg.cross_encoder_weight == 0.7
+        assert cfg.heuristic_weight == 0.3
+        assert cfg.device == "cpu"
+        assert cfg.normalize_scores is True
+
+    def test_reranker_config_bounds_validation(self) -> None:
+        with pytest.raises(ValidationError):
+            RerankerConfig(top_k=0)
+
+        with pytest.raises(ValidationError):
+            RerankerConfig(batch_size=0)
+
+        with pytest.raises(ValidationError):
+            RerankerConfig(cross_encoder_weight=1.5)
+
+        with pytest.raises(ValidationError):
+            RerankerConfig(cross_encoder_weight=-0.1)
+
+        with pytest.raises(ValidationError):
+            RerankerConfig(heuristic_weight=1.2)
+
+    def test_reranker_config_dict_roundtrip(self) -> None:
+        cfg = RerankerConfig(
+            strategy=RerankerStrategy.CROSS_ENCODER,
+            model_name="custom/model",
+            top_k=15,
+            device="cuda",
+        )
+        d = cfg.to_dict()
+        assert d["strategy"] == "cross_encoder"
+        assert d["model_name"] == "custom/model"
+        assert d["top_k"] == 15
+        assert d["device"] == "cuda"
+        rebuilt = RerankerConfig.from_dict(d)
+        assert rebuilt.strategy == RerankerStrategy.CROSS_ENCODER
+        assert rebuilt.top_k == 15
+
+    def test_rerank_explanation(self) -> None:
+        exp = RerankExplanation(
+            chunk_id="chk_01",
+            initial_rank=5,
+            final_rank=1,
+            initial_score=0.65,
+            final_score=0.92,
+            cross_encoder_score=0.88,
+            heuristic_score=0.95,
+            modality_bonus=0.2,
+            reasons=["High table boost", "Exact period alignment"],
+        )
+        assert exp.chunk_id == "chk_01"
+        assert exp.initial_rank == 5
+        assert exp.final_rank == 1
+        assert len(exp.reasons) == 2
+        d = exp.to_dict()
+        rebuilt = RerankExplanation.from_dict(d)
+        assert rebuilt.final_score == 0.92
+        assert rebuilt.reasons == ["High table boost", "Exact period alignment"]
+
+    def test_scored_chunk_rerank_fields(self) -> None:
+        chunk = Chunk(chunk_id="c_test", doc_id="d_test", content="Sample")
+        sc = ScoredChunk(
+            chunk=chunk,
+            score=0.9,
+            cross_encoder_score=0.87,
+            semantic_score=0.85,
+            explanation="Boosted by cross-encoder match",
+        )
+        assert sc.cross_encoder_score == 0.87
+        assert sc.semantic_score == 0.85
+        assert sc.explanation == "Boosted by cross-encoder match"
+        d = sc.to_dict()
+        rebuilt = ScoredChunk.from_dict(d)
+        assert rebuilt.cross_encoder_score == 0.87
+        assert rebuilt.explanation == "Boosted by cross-encoder match"
+
+
+class TestSemanticCacheTypes:
+    """Test SemanticCacheConfig, SemanticCacheEntry, SemanticCacheLookupResult, and SemanticCacheStats."""
+
+    def test_semantic_cache_config_defaults(self) -> None:
+        cfg = SemanticCacheConfig()
+        assert cfg.enabled is True
+        assert cfg.similarity_threshold == 0.88
+        assert cfg.max_entries == 1000
+        assert cfg.ttl_seconds == 3600.0
+        assert cfg.eviction_policy == CacheEvictionPolicy.LRU
+        assert cfg.distance_metric == "cosine"
+
+    def test_semantic_cache_config_bounds(self) -> None:
+        with pytest.raises(ValidationError):
+            SemanticCacheConfig(similarity_threshold=1.5)
+
+        with pytest.raises(ValidationError):
+            SemanticCacheConfig(similarity_threshold=-0.1)
+
+        with pytest.raises(ValidationError):
+            SemanticCacheConfig(max_entries=0)
+
+        with pytest.raises(ValidationError):
+            SemanticCacheConfig(ttl_seconds=-1.0)
+
+    def test_semantic_cache_config_dict_roundtrip(self) -> None:
+        cfg = SemanticCacheConfig(
+            enabled=False,
+            similarity_threshold=0.92,
+            max_entries=500,
+            eviction_policy=CacheEvictionPolicy.LFU,
+        )
+        d = cfg.to_dict()
+        assert d["similarity_threshold"] == 0.92
+        assert d["eviction_policy"] == "lfu"
+        rebuilt = SemanticCacheConfig.from_dict(d)
+        assert rebuilt.enabled is False
+        assert rebuilt.max_entries == 500
+
+    def test_semantic_cache_entry_lifecycle(self) -> None:
+        resp = AgentResponse(query="Revenue 2025", answer="$391B")
+        entry = SemanticCacheEntry(
+            key="cache_key_1",
+            query="Revenue 2025",
+            query_vector=[0.1, 0.2, 0.3],
+            response=resp,
+            similarity_score=0.95,
+            created_at=100.0,
+            last_accessed_at=100.0,
+            access_count=1,
+        )
+        assert entry.key == "cache_key_1"
+        assert entry.query_vector == [0.1, 0.2, 0.3]
+        assert entry.response.answer == "$391B"
+        assert entry.is_expired(ttl_seconds=50.0, current_time=120.0) is False
+        assert entry.is_expired(ttl_seconds=50.0, current_time=160.0) is True
+
+        entry.touch(current_time=130.0)
+        assert entry.access_count == 2
+        assert entry.last_accessed_at == 130.0
+
+        d = entry.to_dict()
+        rebuilt = SemanticCacheEntry.from_dict(d)
+        assert rebuilt.key == "cache_key_1"
+        assert rebuilt.response.answer == "$391B"
+        assert rebuilt.access_count == 2
+
+    def test_semantic_cache_lookup_result(self) -> None:
+        resp = AgentResponse(query="Net sales", answer="$100M")
+        hit_result = SemanticCacheLookupResult(
+            hit=True,
+            similarity=0.93,
+            matched_query="What was net sales?",
+            response=resp,
+            lookup_latency_ms=1.45,
+            hit_type=CacheHitType.SEMANTIC,
+        )
+        assert hit_result.hit is True
+        assert hit_result.hit_type == CacheHitType.SEMANTIC
+        assert hit_result.matched_query == "What was net sales?"
+        assert hit_result.response is not None
+        assert hit_result.response.answer == "$100M"
+
+        miss_result = SemanticCacheLookupResult(hit=False, hit_type=CacheHitType.NONE)
+        assert miss_result.hit is False
+        assert miss_result.response is None
+
+        d = hit_result.to_dict()
+        rebuilt = SemanticCacheLookupResult.from_dict(d)
+        assert rebuilt.hit is True
+        assert rebuilt.similarity == 0.93
+
+    def test_semantic_cache_stats(self) -> None:
+        stats = SemanticCacheStats(
+            total_queries=100,
+            exact_hits=40,
+            semantic_hits=35,
+            misses=25,
+            evictions=5,
+            entry_count=500,
+            max_entries=1000,
+            hit_rate=0.75,
+            avg_lookup_latency_ms=0.85,
+        )
+        assert stats.total_queries == 100
+        assert stats.hit_rate == 0.75
+        assert stats.exact_hits + stats.semantic_hits + stats.misses == 100
+        d = stats.to_dict()
+        rebuilt = SemanticCacheStats.from_dict(d)
+        assert rebuilt.hit_rate == 0.75
+        assert rebuilt.semantic_hits == 35
+
+
+class TestHybridSearchConfig:
+    """Test HybridSearchConfig validation, defaults, and serialization."""
+
+    def test_hybrid_search_config_defaults(self) -> None:
+        cfg = HybridSearchConfig()
+        assert cfg.strategy == RetrievalStrategy.HYBRID_RRF
+        assert cfg.top_k == 10
+        assert cfg.alpha == 0.5
+        assert cfg.rrf_k == 60
+        assert cfg.rerank_top_k == 5
+        assert cfg.score_threshold == 0.0
+
+    def test_hybrid_search_config_bounds(self) -> None:
+        with pytest.raises(ValidationError):
+            HybridSearchConfig(top_k=0)
+
+        with pytest.raises(ValidationError):
+            HybridSearchConfig(alpha=1.5)
+
+        with pytest.raises(ValidationError):
+            HybridSearchConfig(rrf_k=0)
+
+        with pytest.raises(ValidationError):
+            HybridSearchConfig(rerank_top_k=0)
+
+    def test_hybrid_search_config_roundtrip(self) -> None:
+        cfg = HybridSearchConfig(
+            strategy=RetrievalStrategy.HYBRID_CONVEX,
+            top_k=20,
+            alpha=0.7,
+            score_threshold=0.1,
+        )
+        d = cfg.to_dict()
+        assert d["strategy"] == "hybrid_convex"
+        assert d["alpha"] == 0.7
+        rebuilt = HybridSearchConfig.from_dict(d)
+        assert rebuilt.strategy == RetrievalStrategy.HYBRID_CONVEX
+        assert rebuilt.top_k == 20
+
+
+class TestUpdatedAgentTypes:
+    """Test updated fields on AgentQuery and AgentResponse."""
+
+    def test_agent_query_new_fields(self) -> None:
+        q = AgentQuery(
+            query_str="Net income 2025",
+            use_reranker=False,
+            reranker_strategy=RerankerStrategy.CROSS_ENCODER,
+            use_semantic_cache=False,
+            similarity_threshold=0.91,
+        )
+        assert q.use_reranker is False
+        assert q.reranker_strategy == RerankerStrategy.CROSS_ENCODER
+        assert q.use_semantic_cache is False
+        assert q.similarity_threshold == 0.91
+
+        d = q.to_dict()
+        assert d["use_reranker"] is False
+        assert d["reranker_strategy"] == "cross_encoder"
+        rebuilt = AgentQuery.from_dict(d)
+        assert rebuilt.reranker_strategy == RerankerStrategy.CROSS_ENCODER
+
+    def test_agent_response_cache_and_rerank_fields(self) -> None:
+        exp = RerankExplanation(
+            chunk_id="c1",
+            initial_rank=3,
+            final_rank=1,
+            initial_score=0.5,
+            final_score=0.95,
+        )
+        resp = AgentResponse(
+            query="Apple sales",
+            answer="$391B",
+            cache_hit=True,
+            cache_type=CacheHitType.SEMANTIC,
+            cache_similarity=0.94,
+            rerank_explanations=[exp],
+        )
+        assert resp.cache_hit is True
+        assert resp.cache_type == CacheHitType.SEMANTIC
+        assert resp.cache_similarity == 0.94
+        assert len(resp.rerank_explanations) == 1
+
+        summary = resp.summary()
+        assert "Cache: semantic" in summary
+
+        d = resp.to_dict()
+        assert d["cache_hit"] is True
+        assert d["cache_type"] == "semantic"
+        rebuilt = AgentResponse.from_dict(d)
+        assert rebuilt.cache_hit is True
+        assert rebuilt.cache_type == CacheHitType.SEMANTIC
+        assert len(rebuilt.rerank_explanations) == 1
+
+
+class TestOrchestratorConfigTypes:
+    """Test OrchestratorConfig configuration integration with types."""
+
+    def test_orchestrator_config_defaults(self) -> None:
+        config = OrchestratorConfig()
+        assert config.enable_semantic_cache is True
+        assert isinstance(config.semantic_cache_config, SemanticCacheConfig)
+        assert config.semantic_cache_config.similarity_threshold == 0.88
+        assert isinstance(config.reranker_config, RerankerConfig)
+        assert config.reranker_config.strategy == RerankerStrategy.HYBRID
+
+
+class TestProtocols:
+    """Test runtime-checkable Protocol implementations and validation."""
+
+    def test_cross_encoder_protocol(self) -> None:
+        class DummyCrossEncoder:
+            def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+                return [0.5] * len(pairs)
+
+        class NonConforming:
+            pass
+
+        assert isinstance(DummyCrossEncoder(), CrossEncoderProtocol)
+        assert not isinstance(NonConforming(), CrossEncoderProtocol)
+
+    def test_reranker_protocol(self) -> None:
+        class DummyReranker:
+            def rerank(
+                self,
+                query: str | AgentQuery,
+                candidates: list[ScoredChunk],
+                top_k: int | None = None,
+            ) -> list[ScoredChunk]:
+                return candidates[:top_k] if top_k else candidates
+
+        class NonConforming:
+            pass
+
+        assert isinstance(DummyReranker(), RerankerProtocol)
+        assert not isinstance(NonConforming(), RerankerProtocol)
+
+    def test_semantic_cache_protocol(self) -> None:
+        class DummySemanticCache:
+            def get(
+                self, query: str, query_vector: list[float] | None = None
+            ) -> SemanticCacheLookupResult | None:
+                return None
+
+            def put(
+                self,
+                query: str,
+                response: AgentResponse,
+                query_vector: list[float] | None = None,
+            ) -> None:
+                pass
+
+            def clear(self) -> None:
+                pass
+
+            def stats(self) -> SemanticCacheStats:
+                return SemanticCacheStats()
+
+        class NonConforming:
+            pass
+
+        assert isinstance(DummySemanticCache(), SemanticCacheProtocol)
+        assert not isinstance(NonConforming(), SemanticCacheProtocol)
+
+    def test_dense_index_protocol(self) -> None:
+        class DummyDenseIndex:
+            def search(self, query: str | list[float], top_k: int = 10) -> list[tuple[str, float]]:
+                return []
+
+            def add(self, chunk_id: str, text: str, vector: list[float] | None = None) -> None:
+                pass
+
+        class NonConforming:
+            pass
+
+        assert isinstance(DummyDenseIndex(), DenseIndexProtocol)
+        assert not isinstance(NonConforming(), DenseIndexProtocol)
+
+    def test_sparse_index_protocol(self) -> None:
+        class DummySparseIndex:
+            def search(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
+                return []
+
+            def add(self, chunk_id: str, text: str) -> None:
+                pass
+
+        class NonConforming:
+            pass
+
+        assert isinstance(DummySparseIndex(), SparseIndexProtocol)
+        assert not isinstance(NonConforming(), SparseIndexProtocol)
+
+    def test_retriever_protocol(self) -> None:
+        class DummyRetriever:
+            def retrieve(
+                self, query: str | AgentQuery, top_k: int = 10, alpha: float = 0.5
+            ) -> list[ScoredChunk]:
+                return []
+
+        class NonConforming:
+            pass
+
+        assert isinstance(DummyRetriever(), RetrieverProtocol)
+        assert not isinstance(NonConforming(), RetrieverProtocol)
