@@ -41,7 +41,10 @@ class SemanticCacheProtocol(Protocol):
     """Protocol for semantic query and response caching implementations."""
 
     def get(
-        self, query: str, query_vector: list[float] | None = None
+        self,
+        query: str,
+        query_vector: list[float] | None = None,
+        similarity_threshold: float | None = None,
     ) -> SemanticCacheLookupResult | None:
         """Lookup cached response using vector similarity matching."""
         ...

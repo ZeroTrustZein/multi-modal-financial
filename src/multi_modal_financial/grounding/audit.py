@@ -7,7 +7,12 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from multi_modal_financial.types import AgentResponse, GroundingStatus, GroundingVerdict
+from multi_modal_financial.types import (
+    AgentResponse,
+    CacheHitType,
+    GroundingStatus,
+    GroundingVerdict,
+)
 
 
 @dataclass
@@ -25,6 +30,10 @@ class GroundingAuditReport:
     compliance_status: str = "PASS"  # PASS, WARN, FAIL
     flagged_numbers: list[str] = field(default_factory=list)
     query_verdicts: list[dict] = field(default_factory=list)
+    cache_hits: int = 0
+    exact_cache_hits: int = 0
+    semantic_cache_hits: int = 0
+    reranked_queries: int = 0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -46,6 +55,8 @@ class GroundingAuditReport:
             f"- **Unsupported Claims**: {self.unsupported_claims}",
             f"- **Hallucination Rate**: {self.hallucination_rate * 100:.2f}%",
             f"- **Mean Support Confidence**: {self.mean_confidence:.4f}",
+            f"- **Cache Hits**: {self.cache_hits} (Exact: {self.exact_cache_hits}, Semantic: {self.semantic_cache_hits})",
+            f"- **Reranked Queries**: {self.reranked_queries}",
             "",
         ]
 
@@ -97,6 +108,12 @@ class GroundingAuditor:
             "FAIL" if has_hallucinated_nums or (total_claims > 0 and supported == 0) else "PASS"
         )
 
+        cache_type_val = (
+            response.cache_type.value
+            if hasattr(response.cache_type, "value")
+            else str(response.cache_type)
+        )
+
         return {
             "query": response.query,
             "total_claims": total_claims,
@@ -105,6 +122,10 @@ class GroundingAuditor:
             "unsupported_claims": unsupported_claims,
             "unsupported_numbers": unsupported_nums,
             "confidence": response.overall_confidence,
+            "cache_hit": response.cache_hit,
+            "cache_type": cache_type_val,
+            "cache_similarity": response.cache_similarity,
+            "rerank_count": len(response.rerank_explanations),
             "status": status,
         }
 
@@ -118,6 +139,10 @@ class GroundingAuditor:
         all_flagged_nums: list[str] = []
         confidences: list[float] = []
         query_records: list[dict] = []
+        cache_hits = 0
+        exact_cache_hits = 0
+        semantic_cache_hits = 0
+        reranked_queries = 0
 
         for resp in responses:
             record = self.audit_response(resp)
@@ -129,6 +154,16 @@ class GroundingAuditor:
             unsupported_claims += record["unsupported_claims"]
             all_flagged_nums.extend(record["unsupported_numbers"])
             confidences.append(resp.overall_confidence)
+
+            if resp.cache_hit:
+                cache_hits += 1
+                if resp.cache_type == CacheHitType.EXACT:
+                    exact_cache_hits += 1
+                elif resp.cache_type == CacheHitType.SEMANTIC:
+                    semantic_cache_hits += 1
+
+            if resp.rerank_explanations:
+                reranked_queries += 1
 
         unique_flagged = sorted(set(all_flagged_nums))
         hallucination_rate = (unsupported_claims / total_claims) if total_claims > 0 else 0.0
@@ -152,6 +187,10 @@ class GroundingAuditor:
             compliance_status=compliance,
             flagged_numbers=unique_flagged,
             query_verdicts=query_records,
+            cache_hits=cache_hits,
+            exact_cache_hits=exact_cache_hits,
+            semantic_cache_hits=semantic_cache_hits,
+            reranked_queries=reranked_queries,
         )
 
     def export_report(self, report: GroundingAuditReport, output_path: str | Path) -> Path:

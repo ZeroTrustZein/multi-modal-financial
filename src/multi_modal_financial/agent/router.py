@@ -5,7 +5,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from multi_modal_financial.types import AgentQuery, ModalType, QueryIntent
+from multi_modal_financial.types import (
+    AgentQuery,
+    ModalType,
+    QueryIntent,
+    RerankerStrategy,
+)
 
 
 class QueryRouter:
@@ -106,6 +111,7 @@ class QueryRouter:
         ):
             intent = QueryIntent.COMPARATIVE_ANALYSIS
             preferred_modal = ModalType.TABLE
+            reranker_strategy = RerankerStrategy.HYBRID
         elif any(
             w in q_lower
             for w in [
@@ -121,6 +127,7 @@ class QueryRouter:
         ):
             intent = QueryIntent.TREND_CALCULATION
             preferred_modal = ModalType.TABLE
+            reranker_strategy = RerankerStrategy.HYBRID
         elif any(
             w in q_lower
             for w in [
@@ -135,12 +142,15 @@ class QueryRouter:
         ):
             intent = QueryIntent.QUALITATIVE_RISK
             preferred_modal = ModalType.TEXT
+            reranker_strategy = RerankerStrategy.CROSS_ENCODER
         elif any(w in q_lower for w in self.KNOWN_FINANCIAL_WORDS):
             intent = QueryIntent.METRIC_LOOKUP
             preferred_modal = ModalType.METRIC
+            reranker_strategy = RerankerStrategy.HEURISTIC
         else:
             intent = QueryIntent.GENERAL
             preferred_modal = ModalType.TEXT
+            reranker_strategy = RerankerStrategy.HYBRID
 
         # Entity extraction: Year
         year_match = self.YEAR_PATTERN.search(query_str)
@@ -181,11 +191,21 @@ class QueryRouter:
             "year": year,
             "doc_type": doc_type,
             "alpha": alpha,
+            "reranker_strategy": reranker_strategy,
         }
 
-    def build_agent_query(self, query_str: str, top_k: int = 5) -> AgentQuery:
+    def build_agent_query(
+        self,
+        query_str: str,
+        top_k: int = 5,
+        use_reranker: bool = True,
+        reranker_strategy: RerankerStrategy | None = None,
+        use_semantic_cache: bool = True,
+        similarity_threshold: float | None = None,
+    ) -> AgentQuery:
         """Construct AgentQuery from raw string with automatically parsed filters."""
         routing = self.route(query_str)
+        effective_strategy = reranker_strategy or routing.get("reranker_strategy")
         return AgentQuery(
             query_str=query_str,
             ticker_filter=routing["ticker"],
@@ -196,4 +216,8 @@ class QueryRouter:
             intent=routing["intent"],
             top_k=top_k,
             alpha=routing["alpha"],
+            use_reranker=use_reranker,
+            reranker_strategy=effective_strategy,
+            use_semantic_cache=use_semantic_cache,
+            similarity_threshold=similarity_threshold,
         )

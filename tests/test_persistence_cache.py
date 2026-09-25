@@ -8,7 +8,7 @@ import pytest
 from multi_modal_financial.indexing.hybrid import HybridIndex
 from multi_modal_financial.interfaces import SemanticCacheProtocol
 from multi_modal_financial.storage.cache import EmbeddingCache, QueryCache, SemanticCache
-from multi_modal_financial.storage.persistence import IndexPersistence
+from multi_modal_financial.storage.persistence import IndexManifest, IndexPersistence
 from multi_modal_financial.types import (
     AgentResponse,
     CacheEvictionPolicy,
@@ -114,6 +114,23 @@ class TestIndexPersistence:
         assert imported_index.total_chunks() == 3
         # Should have functioning search indices
         assert imported_index.bm25.corpus_size == 3
+
+    def test_manifest_serialization(self):
+        manifest = IndexManifest(
+            total_documents=10,
+            total_chunks=50,
+            reranker_strategy="hybrid",
+            semantic_cache_entries=5,
+        )
+        d = manifest.to_dict()
+        assert d["reranker_strategy"] == "hybrid"
+        assert d["semantic_cache_entries"] == 5
+
+        # Unknown field tolerance
+        d["unknown_future_field"] = "foo"
+        rebuilt = IndexManifest.from_dict(d)
+        assert rebuilt.total_documents == 10
+        assert rebuilt.reranker_strategy == "hybrid"
 
 
 class TestCaches:
@@ -331,3 +348,19 @@ class TestSemanticCache:
         assert st_after.total_queries == 0
         assert st_after.entry_count == 0
         assert st_after.hit_rate == 0.0
+
+    def test_save_and_load_semantic_cache(self, sample_response: AgentResponse, tmp_path: Path) -> None:
+        cache = SemanticCache()
+        cache.put("Apple fiscal 2025 revenue", sample_response)
+        cache.put("Microsoft Cloud revenue 2025", sample_response)
+
+        cache_file = tmp_path / "semantic_cache.json"
+        saved_path = IndexPersistence.save_semantic_cache(cache, cache_file)
+        assert saved_path.exists()
+
+        restored_cache = IndexPersistence.load_semantic_cache(saved_path)
+        assert len(restored_cache._entries) == 2
+        lookup = restored_cache.get("Apple fiscal 2025 revenue")
+        assert lookup is not None
+        assert lookup.hit is True
+        assert lookup.hit_type == CacheHitType.EXACT

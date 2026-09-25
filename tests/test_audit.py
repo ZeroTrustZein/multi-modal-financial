@@ -5,10 +5,12 @@ from pathlib import Path
 from multi_modal_financial.grounding.audit import GroundingAuditor
 from multi_modal_financial.types import (
     AgentResponse,
+    CacheHitType,
     Citation,
     GroundingStatus,
     GroundingVerdict,
     ModalType,
+    RerankExplanation,
 )
 
 
@@ -149,3 +151,48 @@ class TestGroundingAuditor:
         assert "Financial RAG Grounding & Factual Audit Report" in md_out.read_text(
             encoding="utf-8"
         )
+
+    def test_audit_with_cache_and_reranker_telemetry(self):
+        auditor = GroundingAuditor()
+        resp1 = AgentResponse(
+            query="Apple Q3 net sales",
+            answer="Net sales was $94.9B",
+            citations=[],
+            grounding_verdicts=[
+                GroundingVerdict(
+                    claim="Net sales was $94.9B",
+                    citations=[],
+                    is_supported=True,
+                    support_score=0.95,
+                    status=GroundingStatus.FULLY_SUPPORTED,
+                )
+            ],
+            retrieved_chunks=[],
+            cache_hit=True,
+            cache_type=CacheHitType.SEMANTIC,
+            cache_similarity=0.91,
+            rerank_explanations=[
+                RerankExplanation(
+                    chunk_id="c1",
+                    initial_rank=3,
+                    final_rank=1,
+                    initial_score=0.4,
+                    final_score=0.85,
+                    reasons=["High concept overlap"],
+                )
+            ],
+        )
+
+        record = auditor.audit_response(resp1)
+        assert record["cache_hit"] is True
+        assert record["cache_type"] == "semantic"
+        assert record["rerank_count"] == 1
+
+        report = auditor.audit_batch([resp1])
+        assert report.cache_hits == 1
+        assert report.semantic_cache_hits == 1
+        assert report.exact_cache_hits == 0
+        assert report.reranked_queries == 1
+        md = report.to_markdown()
+        assert "**Cache Hits**: 1" in md
+        assert "**Reranked Queries**: 1" in md

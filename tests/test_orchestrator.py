@@ -9,6 +9,16 @@ from multi_modal_financial.pipeline.orchestrator import (
     FinancialPipelineOrchestrator,
     OrchestratorConfig,
 )
+from multi_modal_financial.types import (
+    AgentQuery,
+    CacheHitType,
+    HybridSearchConfig,
+    RerankerConfig,
+    RerankerStrategy,
+    RetrievalBenchmarkResult,
+    RetrievalStrategy,
+    SemanticCacheConfig,
+)
 
 
 class TestFinancialPipelineOrchestrator:
@@ -118,3 +128,73 @@ class TestFinancialPipelineOrchestrator:
 
         with pytest.raises(KeyError):
             orch.compare_documents(doc_ids[0], "missing_id")
+
+    def test_orchestrator_hybrid_search_config(self, setup_sample_corpus: Path):
+        cfg = OrchestratorConfig(
+            hybrid_search_config=HybridSearchConfig(
+                strategy=RetrievalStrategy.HYBRID_RRF,
+                rrf_k=40,
+                rerank_top_k=3,
+            ),
+            reranker_config=RerankerConfig(
+                strategy=RerankerStrategy.HYBRID,
+                score_threshold=0.0,
+            ),
+        )
+        orch = FinancialPipelineOrchestrator(config=cfg)
+        orch.ingest_files(setup_sample_corpus)
+
+        assert orch.retriever.config.rrf_k == 40
+        assert orch.reranker.config.strategy == RerankerStrategy.HYBRID
+
+        resp = orch.run_query("Apple revenue Q3")
+        assert len(resp.retrieved_chunks) > 0
+        st = orch.status()
+        assert st["retriever"]["rrf_k"] == 40
+        assert st["reranker"]["strategy"] == "hybrid"
+
+    def test_orchestrator_checkpoint_dir_auto(self, setup_sample_corpus: Path, tmp_path: Path):
+        persist_dir = tmp_path / "auto_ckpt"
+        cfg = OrchestratorConfig(persistence_dir=persist_dir)
+        orch = FinancialPipelineOrchestrator(config=cfg)
+        orch.ingest_files(setup_sample_corpus)
+
+        saved = orch.checkpoint()
+        assert saved.exists()
+        assert (persist_dir / "manifest.json").exists()
+
+        # Without persistence_dir configured
+        orch_no_dir = FinancialPipelineOrchestrator()
+        with pytest.raises(ValueError, match="persistence_dir is not configured"):
+            orch_no_dir.checkpoint()
+
+    def test_orchestrator_save_and_load_semantic_cache(self, setup_sample_corpus: Path, tmp_path: Path):
+        orch = FinancialPipelineOrchestrator()
+        orch.ingest_files(setup_sample_corpus)
+
+        # Run query to populate semantic cache
+        q1 = AgentQuery(query_str="What was Apple revenue in Q3 2025?", top_k=2)
+        resp1 = orch.run_query(q1)
+        assert resp1 is not None
+
+        cache_path = tmp_path / "cache_dump.json"
+        saved = orch.save_semantic_cache(cache_path)
+        assert saved is not None and saved.exists()
+
+        orch2 = FinancialPipelineOrchestrator()
+        orch2.load_semantic_cache(cache_path)
+        assert orch2.semantic_cache is not None
+        assert len(orch2.semantic_cache._entries) >= 1
+
+    def test_orchestrator_benchmark_retrieval(self, setup_sample_corpus: Path):
+        orch = FinancialPipelineOrchestrator()
+        docs = orch.ingest_files(setup_sample_corpus)
+        target_chunk_id = docs[0].chunks[0].chunk_id
+
+        labeled_queries = [
+            ("Apple revenue Q3", [target_chunk_id]),
+        ]
+        result = orch.benchmark_retrieval(labeled_queries, k=5)
+        assert isinstance(result, RetrievalBenchmarkResult)
+        assert result.query_count == 1
+        assert result.avg_latency_ms >= 0.0

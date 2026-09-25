@@ -708,6 +708,9 @@ class AgentQuery(BaseFinancialModel):
     alpha: float = Field(default=0.5, ge=0.0, le=1.0)  # Weight for dense vs BM25
     use_reranker: bool = True
     reranker_strategy: RerankerStrategy | None = None
+    reranker_top_k: int | None = None
+    reranker_threshold: float | None = None
+    retrieval_strategy: RetrievalStrategy = RetrievalStrategy.HYBRID_RRF
     use_semantic_cache: bool = True
     similarity_threshold: float | None = None
 

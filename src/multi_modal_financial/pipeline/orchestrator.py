@@ -26,7 +26,9 @@ from multi_modal_financial.types import (
     AgentResponse,
     CacheHitType,
     Document,
+    HybridSearchConfig,
     RerankerConfig,
+    RetrievalBenchmarkResult,
     SemanticCacheConfig,
 )
 
@@ -50,6 +52,7 @@ class OrchestratorConfig:
     persistence_dir: Path | None = None
     semantic_cache_config: SemanticCacheConfig = field(default_factory=SemanticCacheConfig)
     reranker_config: RerankerConfig = field(default_factory=RerankerConfig)
+    hybrid_search_config: HybridSearchConfig = field(default_factory=HybridSearchConfig)
     extra_options: dict[str, Any] = field(default_factory=dict)
 
 
@@ -88,7 +91,10 @@ class FinancialPipelineOrchestrator:
 
         # Indexing & Search
         self.index = index or HybridIndex()
-        self.retriever = HybridRetriever(self.index)
+        self.retriever = HybridRetriever(
+            self.index,
+            config=self.config.hybrid_search_config,
+        )
         self.reranker = FinancialReranker(config=self.config.reranker_config)
         self.router = QueryRouter()
         self.verifier = GroundingVerifier(confidence_threshold=self.config.confidence_threshold)
@@ -245,12 +251,49 @@ class FinancialPipelineOrchestrator:
         """Load index from disk and re-link pipeline retriever."""
         self.index = self.persistence.load(source_path)
         self.rag_pipeline.index = self.index
-        self.rag_pipeline.retriever = HybridRetriever(self.index)
+        self.rag_pipeline.retriever = HybridRetriever(
+            self.index,
+            config=self.config.hybrid_search_config,
+        )
         self.retriever = self.rag_pipeline.retriever
         if self.query_cache:
             self.query_cache.clear()
         if self.semantic_cache:
             self.semantic_cache.clear()
+
+    def checkpoint(self, compress: bool = False) -> Path:
+        """Persist current index to configured persistence_dir."""
+        if not self.config.persistence_dir:
+            raise ValueError("persistence_dir is not configured in OrchestratorConfig")
+        return self.save_index(self.config.persistence_dir, compress=compress)
+
+    def save_semantic_cache(self, output_path: str | Path) -> Path | None:
+        """Persist semantic cache entries to disk."""
+        if not self.semantic_cache:
+            return None
+        return self.persistence.save_semantic_cache(self.semantic_cache, output_path)
+
+    def load_semantic_cache(self, source_path: str | Path) -> None:
+        """Load semantic cache entries from disk."""
+        self.semantic_cache = self.persistence.load_semantic_cache(
+            source_path, config=self.config.semantic_cache_config
+        )
+
+    def benchmark_retrieval(
+        self,
+        test_queries: list[tuple[AgentQuery | str, list[str]]],
+        k: int = 5,
+        use_rrf: bool = True,
+    ) -> RetrievalBenchmarkResult:
+        """Run retrieval benchmark suite across labeled test queries."""
+        formatted: list[tuple[AgentQuery, list[str]]] = []
+        for q, rel_ids in test_queries:
+            if isinstance(q, str):
+                agent_q = self.router.build_agent_query(q, top_k=k)
+            else:
+                agent_q = q
+            formatted.append((agent_q, rel_ids))
+        return self.retriever.benchmark(formatted, k=k, use_rrf=use_rrf)
 
     def status(self) -> dict[str, Any]:
         """Summary diagnostics of the pipeline and subsystems."""
@@ -263,5 +306,22 @@ class FinancialPipelineOrchestrator:
             "query_cache": self.query_cache.stats() if self.query_cache else None,
             "embedding_cache": self.embedding_cache.stats() if self.embedding_cache else None,
             "semantic_cache": self.semantic_cache.stats().to_dict() if self.semantic_cache else None,
+            "reranker": {
+                "strategy": (
+                    self.reranker.config.strategy.value
+                    if hasattr(self.reranker.config.strategy, "value")
+                    else str(self.reranker.config.strategy)
+                ),
+                "model_name": self.reranker.config.model_name,
+                "top_k": self.reranker.config.top_k,
+            },
+            "retriever": {
+                "strategy": (
+                    self.retriever.config.strategy.value
+                    if hasattr(self.retriever.config.strategy, "value")
+                    else str(self.retriever.config.strategy)
+                ),
+                "rrf_k": self.retriever.config.rrf_k,
+            },
         }
         return stats

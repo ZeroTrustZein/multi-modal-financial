@@ -101,6 +101,8 @@ class HybridRetriever:
             effective_strategy = RetrievalStrategy.HYBRID_CONVEX
         elif use_rrf is True:
             effective_strategy = RetrievalStrategy.HYBRID_RRF
+        elif getattr(agent_query, "retrieval_strategy", None) is not None:
+            effective_strategy = agent_query.retrieval_strategy
         else:
             effective_strategy = self.config.strategy
 
