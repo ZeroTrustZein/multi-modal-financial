@@ -91,6 +91,10 @@ class BM25Index:
         self._compute_idf()
         return self
 
+    def add(self, chunk_id: str, text: str) -> None:
+        """Insert or index chunk tokens conforming to SparseIndexProtocol."""
+        self.add_documents([chunk_id], [text])
+
     def add_documents(self, doc_ids: list[str], documents: list[str]) -> BM25Index:
         """Incrementally add documents to existing index."""
         if self.corpus_size == 0:

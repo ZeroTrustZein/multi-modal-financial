@@ -115,10 +115,13 @@ class FinancialRAGPipeline:
         scored_candidates = self.retriever.retrieve(agent_query, top_k=agent_query.top_k * 2)
 
         # 2. Rerank candidates
+        rerank_explanations = []
         if use_reranker:
             final_candidates = self.reranker.rerank(
-                agent_query.query_str, scored_candidates, top_k=agent_query.top_k
+                agent_query, scored_candidates, top_k=agent_query.top_k
             )
+            if hasattr(self.reranker, "last_explanations"):
+                rerank_explanations = list(self.reranker.last_explanations)
         else:
             final_candidates = scored_candidates[: agent_query.top_k]
 
@@ -154,6 +157,7 @@ class FinancialRAGPipeline:
             retrieved_chunks=final_candidates,
             execution_time_ms=round(elapsed_ms, 2),
             overall_confidence=round(overall_conf, 4),
+            rerank_explanations=rerank_explanations,
             metadata={
                 "intent": agent_query.intent,
                 "ticker": agent_query.ticker_filter,

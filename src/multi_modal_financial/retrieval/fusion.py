@@ -8,7 +8,9 @@ import time
 from multi_modal_financial.indexing.hybrid import HybridIndex
 from multi_modal_financial.types import (
     AgentQuery,
+    HybridSearchConfig,
     RetrievalBenchmarkResult,
+    RetrievalStrategy,
     ScoredChunk,
 )
 
@@ -62,56 +64,118 @@ def z_score_normalize(scores: list[float]) -> list[float]:
 class HybridRetriever:
     """Combines BM25 and dense vector results into unified ranked candidate chunks."""
 
-    def __init__(self, index: HybridIndex, rrf_k: int = 60):
+    def __init__(
+        self,
+        index: HybridIndex,
+        rrf_k: int = 60,
+        config: HybridSearchConfig | None = None,
+    ):
         self.index = index
-        self.rrf_k = rrf_k
+        self.config = config or HybridSearchConfig(rrf_k=rrf_k)
+        self.rrf_k = self.config.rrf_k
 
     def retrieve(
         self,
-        query: AgentQuery,
-        use_rrf: bool = True,
-        top_k: int | None = None,
+        query: str | AgentQuery,
+        top_k: int = 10,
+        alpha: float = 0.5,
+        use_rrf: bool | None = None,
+        strategy: RetrievalStrategy | str | None = None,
     ) -> list[ScoredChunk]:
-        """Execute hybrid search using RRF or convex alpha weighting with metadata constraints."""
-        k = top_k or query.top_k
+        """Execute hybrid search using RRF, convex alpha weighting, dense, or sparse retrieval."""
+        if isinstance(query, str):
+            agent_query = AgentQuery(query_str=query, top_k=top_k, alpha=alpha)
+            k = top_k
+            cur_alpha = alpha
+        else:
+            agent_query = query
+            k = top_k if top_k != 10 else agent_query.top_k
+            cur_alpha = alpha if alpha != 0.5 else agent_query.alpha
+
         fetch_limit = max(k * 4, 30)
 
-        # 1. Sparse BM25 search
-        sparse_hits = self.index.bm25.search(query.query_str, top_k=fetch_limit)
-        sparse_dict = dict(sparse_hits)
-
-        # 2. Dense vector search
-        dense_hits = self.index.vector.search(query.query_str, top_k=fetch_limit)
-        dense_dict = dict(dense_hits)
+        # Determine effective retrieval strategy
+        if strategy is not None:
+            effective_strategy = RetrievalStrategy(strategy)
+        elif use_rrf is False:
+            effective_strategy = RetrievalStrategy.HYBRID_CONVEX
+        elif use_rrf is True:
+            effective_strategy = RetrievalStrategy.HYBRID_RRF
+        else:
+            effective_strategy = self.config.strategy
 
         # Filter candidates if metadata filtering is requested
         has_filter = bool(
-            query.ticker_filter
-            or query.period_filter
-            or query.year_filter
-            or query.doc_type_filter
-            or query.modal_filter
+            agent_query.ticker_filter
+            or agent_query.period_filter
+            or agent_query.year_filter
+            or agent_query.doc_type_filter
+            or agent_query.modal_filter
         )
 
         allowed_ids: set[str] | None = None
         if has_filter:
             allowed_ids = set(
                 self.index.filter_chunk_ids(
-                    ticker=query.ticker_filter,
-                    period=query.period_filter,
-                    year=query.year_filter,
-                    modal_type=query.modal_filter,
-                    doc_type=query.doc_type_filter,
+                    ticker=agent_query.ticker_filter,
+                    period=agent_query.period_filter,
+                    year=agent_query.year_filter,
+                    modal_type=agent_query.modal_filter,
+                    doc_type=agent_query.doc_type_filter,
                 )
             )
-            sparse_hits = [h for h in sparse_hits if h[0] in allowed_ids]
-            dense_hits = [h for h in dense_hits if h[0] in allowed_ids]
 
         combined_scored: list[ScoredChunk] = []
 
-        if use_rrf:
+        if effective_strategy == RetrievalStrategy.SPARSE:
+            sparse_hits = self.index.bm25.search(agent_query.query_str, top_k=fetch_limit)
+            if allowed_ids is not None:
+                sparse_hits = [h for h in sparse_hits if h[0] in allowed_ids]
+            s_scores = [h[1] for h in sparse_hits]
+            norm_s = min_max_normalize(s_scores)
+            for rank, ((cid, raw_s), norm_score) in enumerate(zip(sparse_hits, norm_s, strict=False)):
+                chunk = self.index.get_chunk(cid)
+                if not chunk:
+                    continue
+                combined_scored.append(
+                    ScoredChunk(
+                        chunk=chunk,
+                        score=round(norm_score, 6),
+                        dense_score=0.0,
+                        sparse_score=round(raw_s, 4),
+                        rank=rank + 1,
+                    )
+                )
+
+        elif effective_strategy == RetrievalStrategy.DENSE:
+            dense_hits = self.index.vector.search(agent_query.query_str, top_k=fetch_limit)
+            if allowed_ids is not None:
+                dense_hits = [h for h in dense_hits if h[0] in allowed_ids]
+            for rank, (cid, score) in enumerate(dense_hits):
+                chunk = self.index.get_chunk(cid)
+                if not chunk:
+                    continue
+                combined_scored.append(
+                    ScoredChunk(
+                        chunk=chunk,
+                        score=round(score, 6),
+                        dense_score=round(score, 4),
+                        sparse_score=0.0,
+                        rank=rank + 1,
+                    )
+                )
+
+        elif effective_strategy == RetrievalStrategy.HYBRID_RRF:
+            sparse_hits = self.index.bm25.search(agent_query.query_str, top_k=fetch_limit)
+            sparse_dict = dict(sparse_hits)
+            dense_hits = self.index.vector.search(agent_query.query_str, top_k=fetch_limit)
+            dense_dict = dict(dense_hits)
+            if allowed_ids is not None:
+                sparse_hits = [h for h in sparse_hits if h[0] in allowed_ids]
+                dense_hits = [h for h in dense_hits if h[0] in allowed_ids]
+
             fused = reciprocal_rank_fusion(dense_hits, sparse_hits, k=self.rrf_k)
-            for rank, (cid, rrf_score) in enumerate(fused[:k]):
+            for rank, (cid, rrf_score) in enumerate(fused):
                 chunk = self.index.get_chunk(cid)
                 if not chunk:
                     continue
@@ -124,8 +188,12 @@ class HybridRetriever:
                         rank=rank + 1,
                     )
                 )
-        else:
-            # Convex combination: alpha * dense_norm + (1 - alpha) * sparse_norm
+
+        else:  # HYBRID_CONVEX
+            sparse_hits = self.index.bm25.search(agent_query.query_str, top_k=fetch_limit)
+            sparse_dict = dict(sparse_hits)
+            dense_hits = self.index.vector.search(agent_query.query_str, top_k=fetch_limit)
+            dense_dict = dict(dense_hits)
             all_cids = list(set(list(sparse_dict.keys()) + list(dense_dict.keys())))
             if allowed_ids is not None:
                 all_cids = [cid for cid in all_cids if cid in allowed_ids]
@@ -138,13 +206,13 @@ class HybridRetriever:
                 norm_d = min_max_normalize(d_scores)
 
                 combined_pairs = []
-                alpha = query.alpha
+                cur_alpha = agent_query.alpha
                 for i, cid in enumerate(all_cids):
-                    final_s = (alpha * norm_d[i]) + ((1.0 - alpha) * norm_s[i])
+                    final_s = (cur_alpha * norm_d[i]) + ((1.0 - cur_alpha) * norm_s[i])
                     combined_pairs.append((cid, final_s, d_scores[i], s_scores[i]))
 
                 combined_pairs.sort(key=lambda x: x[1], reverse=True)
-                for rank, (cid, score, d_sc, s_sc) in enumerate(combined_pairs[:k]):
+                for rank, (cid, score, d_sc, s_sc) in enumerate(combined_pairs):
                     chunk = self.index.get_chunk(cid)
                     if not chunk:
                         continue
@@ -158,7 +226,18 @@ class HybridRetriever:
                         )
                     )
 
-        return combined_scored
+        # Apply score threshold if configured
+        if self.config.score_threshold > 0.0:
+            filtered = [sc for sc in combined_scored if sc.score >= self.config.score_threshold]
+            if filtered:
+                combined_scored = filtered
+
+        # Slice to top k and re-rank
+        final_results = combined_scored[:k]
+        for rank_idx, item in enumerate(final_results):
+            item.rank = rank_idx + 1
+
+        return final_results
 
     def benchmark(
         self,
