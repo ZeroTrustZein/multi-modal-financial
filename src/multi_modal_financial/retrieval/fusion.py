@@ -74,6 +74,26 @@ class HybridRetriever:
         self.config = config or HybridSearchConfig(rrf_k=rrf_k)
         self.rrf_k = self.config.rrf_k
 
+    def _assemble_scored_chunks(
+        self, candidates: list[tuple[str, float, float, float]]
+    ) -> list[ScoredChunk]:
+        """Convert (chunk_id, composite_score, dense_score, sparse_score) tuples to ScoredChunks."""
+        scored: list[ScoredChunk] = []
+        for rank, (cid, score, d_sc, s_sc) in enumerate(candidates):
+            chunk = self.index.get_chunk(cid)
+            if not chunk:
+                continue
+            scored.append(
+                ScoredChunk(
+                    chunk=chunk,
+                    score=round(score, 6),
+                    dense_score=round(d_sc, 4),
+                    sparse_score=round(s_sc, 4),
+                    rank=rank + 1,
+                )
+            )
+        return scored
+
     def retrieve(
         self,
         query: str | AgentQuery,
@@ -101,7 +121,7 @@ class HybridRetriever:
             effective_strategy = RetrievalStrategy.HYBRID_CONVEX
         elif use_rrf is True:
             effective_strategy = RetrievalStrategy.HYBRID_RRF
-        elif getattr(agent_query, "retrieval_strategy", None) is not None:
+        elif agent_query.retrieval_strategy is not None:
             effective_strategy = agent_query.retrieval_strategy
         else:
             effective_strategy = self.config.strategy
@@ -135,39 +155,17 @@ class HybridRetriever:
                 sparse_hits = [h for h in sparse_hits if h[0] in allowed_ids]
             s_scores = [h[1] for h in sparse_hits]
             norm_s = min_max_normalize(s_scores)
-            for rank, ((cid, raw_s), norm_score) in enumerate(
-                zip(sparse_hits, norm_s, strict=False)
-            ):
-                chunk = self.index.get_chunk(cid)
-                if not chunk:
-                    continue
-                combined_scored.append(
-                    ScoredChunk(
-                        chunk=chunk,
-                        score=round(norm_score, 6),
-                        dense_score=0.0,
-                        sparse_score=round(raw_s, 4),
-                        rank=rank + 1,
-                    )
-                )
+            sparse_candidates = [
+                (cid, norm_s[i], 0.0, raw_s) for i, (cid, raw_s) in enumerate(sparse_hits)
+            ]
+            combined_scored = self._assemble_scored_chunks(sparse_candidates)
 
         elif effective_strategy == RetrievalStrategy.DENSE:
             dense_hits = self.index.vector.search(agent_query.query_str, top_k=fetch_limit)
             if allowed_ids is not None:
                 dense_hits = [h for h in dense_hits if h[0] in allowed_ids]
-            for rank, (cid, score) in enumerate(dense_hits):
-                chunk = self.index.get_chunk(cid)
-                if not chunk:
-                    continue
-                combined_scored.append(
-                    ScoredChunk(
-                        chunk=chunk,
-                        score=round(score, 6),
-                        dense_score=round(score, 4),
-                        sparse_score=0.0,
-                        rank=rank + 1,
-                    )
-                )
+            dense_candidates = [(cid, score, score, 0.0) for cid, score in dense_hits]
+            combined_scored = self._assemble_scored_chunks(dense_candidates)
 
         elif effective_strategy == RetrievalStrategy.HYBRID_RRF:
             sparse_hits = self.index.bm25.search(agent_query.query_str, top_k=fetch_limit)
@@ -179,19 +177,11 @@ class HybridRetriever:
                 dense_hits = [h for h in dense_hits if h[0] in allowed_ids]
 
             fused = reciprocal_rank_fusion(dense_hits, sparse_hits, k=self.rrf_k)
-            for rank, (cid, rrf_score) in enumerate(fused):
-                chunk = self.index.get_chunk(cid)
-                if not chunk:
-                    continue
-                combined_scored.append(
-                    ScoredChunk(
-                        chunk=chunk,
-                        score=round(rrf_score, 6),
-                        dense_score=round(dense_dict.get(cid, 0.0), 4),
-                        sparse_score=round(sparse_dict.get(cid, 0.0), 4),
-                        rank=rank + 1,
-                    )
-                )
+            rrf_candidates = [
+                (cid, rrf_score, dense_dict.get(cid, 0.0), sparse_dict.get(cid, 0.0))
+                for cid, rrf_score in fused
+            ]
+            combined_scored = self._assemble_scored_chunks(rrf_candidates)
 
         else:  # HYBRID_CONVEX
             sparse_hits = self.index.bm25.search(agent_query.query_str, top_k=fetch_limit)
@@ -209,26 +199,18 @@ class HybridRetriever:
                 norm_s = min_max_normalize(s_scores)
                 norm_d = min_max_normalize(d_scores)
 
-                combined_pairs = []
                 cur_alpha = agent_query.alpha
-                for i, cid in enumerate(all_cids):
-                    final_s = (cur_alpha * norm_d[i]) + ((1.0 - cur_alpha) * norm_s[i])
-                    combined_pairs.append((cid, final_s, d_scores[i], s_scores[i]))
-
-                combined_pairs.sort(key=lambda x: x[1], reverse=True)
-                for rank, (cid, score, d_sc, s_sc) in enumerate(combined_pairs):
-                    chunk = self.index.get_chunk(cid)
-                    if not chunk:
-                        continue
-                    combined_scored.append(
-                        ScoredChunk(
-                            chunk=chunk,
-                            score=round(score, 6),
-                            dense_score=round(d_sc, 4),
-                            sparse_score=round(s_sc, 4),
-                            rank=rank + 1,
-                        )
+                combined_pairs = [
+                    (
+                        cid,
+                        (cur_alpha * norm_d[i]) + ((1.0 - cur_alpha) * norm_s[i]),
+                        d_scores[i],
+                        s_scores[i],
                     )
+                    for i, cid in enumerate(all_cids)
+                ]
+                combined_pairs.sort(key=lambda x: x[1], reverse=True)
+                combined_scored = self._assemble_scored_chunks(combined_pairs)
 
         # Apply score threshold if configured
         if self.config.score_threshold > 0.0:

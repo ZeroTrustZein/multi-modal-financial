@@ -72,20 +72,22 @@ class PeriodComparator:
         results: list[VarianceResult] = []
 
         for m_comp in compare_metrics:
-            if m_comp.value is None or math.isnan(m_comp.value):
+            comp_val = m_comp.value
+            if comp_val is None or math.isnan(comp_val):
                 continue
             key = m_comp.name.lower().strip()
             if key in base_map:
                 m_base = base_map[key]
-                if m_base.value is None or math.isnan(m_base.value):
+                base_val = m_base.value
+                if base_val is None or math.isnan(base_val):
                     continue
                 unit = (
                     "%" if (m_comp.scale == "percent" or "%" in m_comp.raw_value) else m_comp.unit
                 )
                 var = cls.calculate_variance(
                     name=m_comp.name,
-                    base_val=m_base.value,
-                    compare_val=m_comp.value,
+                    base_val=base_val,
+                    compare_val=comp_val,
                     unit=unit,
                 )
                 results.append(var)

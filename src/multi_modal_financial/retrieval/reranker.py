@@ -18,6 +18,9 @@ from multi_modal_financial.types import (
 class FinancialCrossEncoder:
     """Neural cross-encoder scoring model conforming to CrossEncoderProtocol."""
 
+    _TOKEN_RE = re.compile(r"[a-zA-Z0-9_\$%]+")
+    _NUMBER_RE = re.compile(r"\b\d+(?:,\d{3})*(?:\.\d+)?\b")
+
     FINANCIAL_CONCEPT_WEIGHTS = {
         "revenue": 1.5,
         "sales": 1.4,
@@ -61,8 +64,8 @@ class FinancialCrossEncoder:
 
     def _compute_pair_score(self, query: str, doc: str) -> float:
         """Compute fine-grained cross-token semantic score between query and document text."""
-        q_tokens = [t.lower() for t in re.findall(r"[a-zA-Z0-9_\$%]+", query)]
-        d_tokens = [t.lower() for t in re.findall(r"[a-zA-Z0-9_\$%]+", doc)]
+        q_tokens = [t.lower() for t in self._TOKEN_RE.findall(query)]
+        d_tokens = [t.lower() for t in self._TOKEN_RE.findall(doc)]
 
         if not q_tokens or not d_tokens:
             return 0.0
@@ -86,10 +89,10 @@ class FinancialCrossEncoder:
                 ngram_sim = len(q_bigrams.intersection(d_bigrams)) / len(q_bigrams)
 
         # 3. Numeric & monetary congruence
-        q_numbers = set(re.findall(r"\b\d+(?:,\d{3})*(?:\.\d+)?\b", query))
+        q_numbers = set(self._NUMBER_RE.findall(query))
         num_sim = 0.0
         if q_numbers:
-            d_numbers = set(re.findall(r"\b\d+(?:,\d{3})*(?:\.\d+)?\b", doc))
+            d_numbers = set(self._NUMBER_RE.findall(doc))
             clean_q = {n.replace(",", "") for n in q_numbers}
             clean_d = {n.replace(",", "") for n in d_numbers}
             if clean_q:
@@ -106,6 +109,8 @@ class FinancialReranker:
 
     YEAR_PATTERN = re.compile(r"\b(20\d{2}|19\d{2})\b")
     PERIOD_PATTERN = re.compile(r"\b(Q[1-4]|FY|FY\d{2,4})\b", re.IGNORECASE)
+    _TERM_RE = re.compile(r"[a-zA-Z0-9_\-]+")
+    _NUMBER_RE = re.compile(r"\b\d+(?:,\d{3})*(?:\.\d+)?\b")
 
     def __init__(
         self,
@@ -157,8 +162,10 @@ class FinancialReranker:
         )
 
         q_lower = query_str.lower()
-        q_terms = set(re.findall(r"[a-zA-Z0-9_\-]+", q_lower))
-        q_numbers = set(re.findall(r"\b\d+(?:,\d{3})*(?:\.\d+)?\b", query_str))
+        q_terms = set(self._TERM_RE.findall(q_lower))
+        q_terms_count = max(len(q_terms), 1)
+        q_numbers = set(self._NUMBER_RE.findall(query_str))
+        clean_q_nums = {n.replace(",", "") for n in q_numbers}
         q_years = set(self.YEAR_PATTERN.findall(query_str))
         q_periods = {p.upper() for p in self.PERIOD_PATTERN.findall(query_str)}
 
@@ -186,8 +193,8 @@ class FinancialReranker:
             reasons: list[str] = []
 
             # 1. Lexical term overlap
-            c_terms = set(re.findall(r"[a-zA-Z0-9_\-]+", content_lower))
-            overlap_ratio = len(q_terms.intersection(c_terms)) / max(len(q_terms), 1)
+            c_terms = set(self._TERM_RE.findall(content_lower))
+            overlap_ratio = len(q_terms.intersection(c_terms)) / q_terms_count
             term_score = 0.3 * overlap_ratio
             if overlap_ratio > 0:
                 reasons.append(f"Lexical overlap: {overlap_ratio:.2f}")
@@ -195,15 +202,13 @@ class FinancialReranker:
             # 2. Number alignment bonus
             num_score = 0.0
             num_overlap = 0.0
-            if q_numbers:
-                c_numbers = set(re.findall(r"\b\d+(?:,\d{3})*(?:\.\d+)?\b", chunk.content))
-                clean_q_nums = {n.replace(",", "") for n in q_numbers}
+            if clean_q_nums:
+                c_numbers = set(self._NUMBER_RE.findall(chunk.content))
                 clean_c_nums = {n.replace(",", "") for n in c_numbers}
-                if clean_q_nums:
-                    num_overlap = len(clean_q_nums.intersection(clean_c_nums)) / len(clean_q_nums)
-                    num_score = 0.35 * num_overlap
-                    if num_overlap > 0:
-                        reasons.append(f"Numerical match: {num_overlap:.2f}")
+                num_overlap = len(clean_q_nums.intersection(clean_c_nums)) / len(clean_q_nums)
+                num_score = 0.35 * num_overlap
+                if num_overlap > 0:
+                    reasons.append(f"Numerical match: {num_overlap:.2f}")
 
             # 3. Year and Period temporal alignment
             if q_years:

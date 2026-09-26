@@ -53,16 +53,15 @@ class BM25Index:
                 # If token is a currency or percentage, also add raw number
                 if t_low.startswith("$"):
                     num_part = t_low.lstrip("$")
-                    if num_part:
-                        tokens.append(num_part)
-                        if "," in num_part:
-                            tokens.append(num_part.replace(",", ""))
                 elif t_low.endswith("%"):
                     num_part = t_low.rstrip("%")
-                    if num_part:
-                        tokens.append(num_part)
-                        if "," in num_part:
-                            tokens.append(num_part.replace(",", ""))
+                else:
+                    num_part = ""
+
+                if num_part:
+                    tokens.append(num_part)
+                    if "," in num_part:
+                        tokens.append(num_part.replace(",", ""))
 
         return tokens
 

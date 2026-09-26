@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import click
@@ -28,6 +29,7 @@ from multi_modal_financial.types import (
     AgentQuery,
     RerankerStrategy,
     RetrievalStrategy,
+    ScoredChunk,
 )
 
 console = Console()
@@ -200,6 +202,21 @@ def query(
         console.print(format_rerank_explanations_table(resp.rerank_explanations))
 
 
+def _evaluate_benchmark_retrievals(
+    eval_items: Sequence[tuple[list[ScoredChunk], str]],
+) -> tuple[int, float]:
+    """Calculate correct top-1 hits and MRR for a list of (results, target_doc_id) pairs."""
+    correct = 0
+    mrr = 0.0
+    for hits, target in eval_items:
+        rank = next((i + 1 for i, item in enumerate(hits) if item.chunk.doc_id == target), 0)
+        if rank == 1:
+            correct += 1
+        if rank > 0:
+            mrr += 1.0 / rank
+    return correct, mrr
+
+
 @cli.command()
 @click.option("--top-k", default=3, help="Number of candidates to evaluate")
 def benchmark(top_k: int):
@@ -246,54 +263,40 @@ def benchmark(top_k: int):
     console.print("\n[bold]Running Retrieval Benchmark...[/bold]\n")
 
     # Evaluate BM25
-    bm25_correct = 0
-    mrr_bm25 = 0.0
-    for q, target in test_queries:
-        bm25_res = pipeline.retriever.retrieve(
-            AgentQuery(
-                query_str=q, top_k=top_k, alpha=0.0, retrieval_strategy=RetrievalStrategy.SPARSE
+    bm25_eval = [
+        (
+            pipeline.retriever.retrieve(
+                AgentQuery(
+                    query_str=q, top_k=top_k, alpha=0.0, retrieval_strategy=RetrievalStrategy.SPARSE
+                ),
+                use_rrf=False,
             ),
-            use_rrf=False,
+            target,
         )
-        rank = next((i + 1 for i, item in enumerate(bm25_res) if item.chunk.doc_id == target), 0)
-        if rank == 1:
-            bm25_correct += 1
-        if rank > 0:
-            mrr_bm25 += 1.0 / rank
+        for q, target in test_queries
+    ]
+    bm25_correct, mrr_bm25 = _evaluate_benchmark_retrievals(bm25_eval)
 
     # Evaluate Dense
-    dense_correct = 0
-    mrr_dense = 0.0
-    for q, target in test_queries:
-        dense_res = pipeline.retriever.retrieve(
-            AgentQuery(
-                query_str=q, top_k=top_k, alpha=1.0, retrieval_strategy=RetrievalStrategy.DENSE
+    dense_eval = [
+        (
+            pipeline.retriever.retrieve(
+                AgentQuery(
+                    query_str=q, top_k=top_k, alpha=1.0, retrieval_strategy=RetrievalStrategy.DENSE
+                ),
+                use_rrf=False,
             ),
-            use_rrf=False,
+            target,
         )
-        rank = next((i + 1 for i, item in enumerate(dense_res) if item.chunk.doc_id == target), 0)
-        if rank == 1:
-            dense_correct += 1
-        if rank > 0:
-            mrr_dense += 1.0 / rank
+        for q, target in test_queries
+    ]
+    dense_correct, mrr_dense = _evaluate_benchmark_retrievals(dense_eval)
 
     # Evaluate Hybrid RRF + Reranker
-    hybrid_correct = 0
-    mrr_hybrid = 0.0
-    for q, target in test_queries:
-        hybrid_resp = pipeline.query(q, top_k=top_k)
-        rank = next(
-            (
-                i + 1
-                for i, item in enumerate(hybrid_resp.retrieved_chunks)
-                if item.chunk.doc_id == target
-            ),
-            0,
-        )
-        if rank == 1:
-            hybrid_correct += 1
-        if rank > 0:
-            mrr_hybrid += 1.0 / rank
+    hybrid_eval = [
+        (pipeline.query(q, top_k=top_k).retrieved_chunks, target) for q, target in test_queries
+    ]
+    hybrid_correct, mrr_hybrid = _evaluate_benchmark_retrievals(hybrid_eval)
 
     total = len(test_queries)
     table = format_benchmark_table(

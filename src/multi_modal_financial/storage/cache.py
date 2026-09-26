@@ -201,8 +201,8 @@ class SemanticCache:
         self, v1: list[float] | np.ndarray, v2: list[float] | np.ndarray
     ) -> float:
         """Compute similarity score according to configured distance metric."""
-        arr1 = np.asarray(v1, dtype=np.float32)
-        arr2 = np.asarray(v2, dtype=np.float32)
+        arr1 = v1 if isinstance(v1, np.ndarray) else np.asarray(v1, dtype=np.float32)
+        arr2 = v2 if isinstance(v2, np.ndarray) else np.asarray(v2, dtype=np.float32)
 
         if self.config.distance_metric == "cosine":
             norm1 = np.linalg.norm(arr1)
@@ -224,6 +224,17 @@ class SemanticCache:
             norm_q = self._normalize_query(entry.query)
             if self._exact_index.get(norm_q) == key:
                 self._exact_index.pop(norm_q, None)
+
+    def _purge_expired(self, current_time: float) -> list[str]:
+        """Purge and return expired cache entry keys."""
+        expired_keys = [
+            k
+            for k, e in self._entries.items()
+            if e.is_expired(self.config.ttl_seconds, current_time=current_time)
+        ]
+        for exp_k in expired_keys:
+            self._delete_entry(exp_k)
+        return expired_keys
 
     def get(
         self,
@@ -263,6 +274,7 @@ class SemanticCache:
 
         # 2. Semantic vector match
         q_vec = query_vector if query_vector is not None else self._embed_query(query)
+        q_arr = np.asarray(q_vec, dtype=np.float32)
 
         best_sim = -1.0
         best_entry: SemanticCacheEntry | None = None
@@ -276,7 +288,7 @@ class SemanticCache:
             if not entry.query_vector:
                 continue
 
-            sim = self._compute_similarity(q_vec, entry.query_vector)
+            sim = self._compute_similarity(q_arr, entry.query_vector)
             if sim > best_sim:
                 best_sim = sim
                 best_entry = entry
@@ -340,13 +352,7 @@ class SemanticCache:
         # Check and enforce capacity limits
         if len(self._entries) >= self.config.max_entries:
             # First purge expired entries
-            expired_keys = [
-                k
-                for k, e in self._entries.items()
-                if e.is_expired(self.config.ttl_seconds, current_time=now)
-            ]
-            for exp_k in expired_keys:
-                self._delete_entry(exp_k)
+            self._purge_expired(current_time=now)
 
             # If still full, evict according to policy
             if len(self._entries) >= self.config.max_entries:

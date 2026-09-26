@@ -115,7 +115,7 @@ class FinancialDataCleaner:
             return table_text
 
         for idx, line in enumerate(lines):
-            if not line.startswith("|") and not line.endswith("|") and "|" not in line:
+            if "|" not in line:
                 # Non-table line, retain as-is
                 repaired_lines.append(line)
                 continue
