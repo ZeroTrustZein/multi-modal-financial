@@ -448,6 +448,19 @@ class TestSemanticCache:
         res = cache.get("unseen query that scans")
         assert res is not None and res.hit is False
 
+    def test_semantic_cache_expired_detected_during_scan(
+        self, sample_response: AgentResponse
+    ) -> None:
+        import time
+
+        config = SemanticCacheConfig(ttl_seconds=0.02)
+        cache = SemanticCache(config=config)
+        cache.put("slow query", sample_response)
+        time.sleep(0.03)
+        res = cache.get("different query")
+        assert res is not None and res.hit is False
+        assert len(cache._entries) == 0
+
     def test_persistence_semantic_cache_errors(self, tmp_path: Path) -> None:
         import pytest
 

@@ -369,6 +369,6 @@ class TestHybridRetrieverStrategies:
 
     def test_default_config_strategy(self, setup_retriever: HybridRetriever) -> None:
         setup_retriever.config = HybridSearchConfig(strategy=RetrievalStrategy.SPARSE)
-        hits = setup_retriever.retrieve(AgentQuery(query_str="operating expenses", use_rrf=None))
+        hits = setup_retriever.retrieve(AgentQuery(query_str="operating expenses"), use_rrf=None)
         assert len(hits) > 0
         assert hits[0].chunk.chunk_id == "chunk_2"

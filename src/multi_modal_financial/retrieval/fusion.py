@@ -232,9 +232,9 @@ class HybridRetriever:
 
         # Apply score threshold if configured
         if self.config.score_threshold > 0.0:
-            filtered = [sc for sc in combined_scored if sc.score >= self.config.score_threshold]
-            if filtered:
-                combined_scored = filtered
+            combined_scored = [
+                sc for sc in combined_scored if sc.score >= self.config.score_threshold
+            ]
 
         # Slice to top k and re-rank
         final_results = combined_scored[:k]

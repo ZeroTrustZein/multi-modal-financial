@@ -244,19 +244,56 @@ class TestCLI:
         assert "Grounding Compliance Audit Report" in result.output
         assert "Total Queries Audited" in result.output
 
+    def test_audit_command_default_queries(self, runner: CliRunner):
+        """Test audit CLI command with default query set."""
+        result = runner.invoke(cli, ["audit"])
+        assert result.exit_code == 0
+        assert "Grounding Compliance Audit Report" in result.output
+
+    def test_ratios_command_invalid_doc(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Test ratios command when file contains no valid parsed document."""
+        dummy = tmp_path / "dummy.txt"
+        dummy.write_text("irrelevant content", encoding="utf-8")
+        from multi_modal_financial.pipeline.orchestrator import FinancialPipelineOrchestrator
+
+        monkeypatch.setattr(FinancialPipelineOrchestrator, "ingest_files", lambda self, p: [])
+        result = runner.invoke(cli, ["ratios", str(dummy)])
+        assert result.exit_code == 0
+        assert "No valid document parsed from path" in result.output
+
+    def test_compare_command_failed_loading(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Test compare command when document loading fails."""
+        f1 = tmp_path / "doc1.txt"
+        f2 = tmp_path / "doc2.txt"
+        f1.write_text("data 1", encoding="utf-8")
+        f2.write_text("data 2", encoding="utf-8")
+        from multi_modal_financial.pipeline.orchestrator import FinancialPipelineOrchestrator
+
+        monkeypatch.setattr(FinancialPipelineOrchestrator, "ingest_files", lambda self, p: [])
+        result = runner.invoke(cli, ["compare", str(f1), str(f2)])
+        assert result.exit_code == 0
+        assert "Failed to load one or both documents for comparison" in result.output
+
     def test_formatters_unit(self):
         """Direct tests for formatters module components."""
         from multi_modal_financial.analytics.comparator import VarianceResult
         from multi_modal_financial.analytics.ratios import RatioSummary
         from multi_modal_financial.cli.formatters import (
             format_audit_table,
+            format_benchmark_table,
             format_cache_stats_table,
             format_comparison_table,
             format_ratios_table,
             format_rerank_explanations_table,
+            format_response_panel,
         )
         from multi_modal_financial.grounding.audit import GroundingAuditReport
         from multi_modal_financial.types import (
+            CacheHitType,
             RerankExplanation,
             SemanticCacheStats,
         )
@@ -326,6 +363,32 @@ class TestCLI:
         )
         tbl_audit = format_audit_table(rep)
         assert tbl_audit.title == "Grounding Compliance Audit Report"
+
+        # 6. Response panel with cache hit
+        panel = format_response_panel(
+            answer="Net sales was $100M",
+            execution_time_ms=12.5,
+            confidence=0.95,
+            cache_hit=True,
+            cache_type=CacheHitType.EXACT,
+            retrieval_strategy="sparse",
+            reranker_strategy="heuristic",
+        )
+        assert panel.title is not None and "12.5 ms" in str(panel.title)
+        assert panel.subtitle is not None and "Cache: exact" in str(panel.subtitle)
+
+        # 7. Benchmark table with all options
+        tbl_bench = format_benchmark_table(
+            bm25_r1=0.8,
+            bm25_mrr=0.85,
+            hybrid_r1=0.95,
+            hybrid_mrr=0.98,
+            dense_r1=0.82,
+            dense_mrr=0.86,
+            convex_r1=0.88,
+            convex_mrr=0.91,
+        )
+        assert tbl_bench.title == "Benchmark Results (Recall@1 & MRR)"
 
     def test_main_module_execution(self, monkeypatch):
         """Test python -m multi_modal_financial entrypoint."""

@@ -141,3 +141,30 @@ class TestFinancialRAGPipeline:
         st = orch.status()
         assert st["semantic_cache"] is not None
         assert st["semantic_cache"]["total_queries"] >= 1
+
+    def test_auto_grounding_and_verdict_confidence_fallback(
+        self, rag_pipeline: FinancialRAGPipeline, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Mock synthesis to return an answer without bracket citations
+        monkeypatch.setattr(
+            rag_pipeline,
+            "_synthesize_answer",
+            lambda q, chunks: "Net sales were $391,035 million according to recent filings.",
+        )
+        # Mock verifier to return empty verdicts list
+        monkeypatch.setattr(rag_pipeline.verifier, "verify_response", lambda ans, chunks: [])
+
+        resp = rag_pipeline.query("Total sales for 2025")
+        assert len(resp.retrieved_chunks) > 0
+        assert len(resp.citations) > 0
+        assert resp.overall_confidence == 0.5
+
+    def test_query_with_custom_reranker_top_k(self, rag_pipeline: FinancialRAGPipeline) -> None:
+        q = AgentQuery(
+            query_str="Net sales in fiscal 2025",
+            top_k=5,
+            reranker_top_k=1,
+            use_reranker=True,
+        )
+        resp = rag_pipeline.query(q)
+        assert len(resp.retrieved_chunks) == 1

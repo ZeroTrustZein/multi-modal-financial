@@ -191,10 +191,16 @@ class TestFinancialPipelineOrchestrator:
         docs = orch.ingest_files(setup_sample_corpus)
         target_chunk_id = docs[0].chunks[0].chunk_id
 
-        labeled_queries = [
+        labeled_queries: list[tuple[AgentQuery | str, list[str]]] = [
             ("Apple revenue Q3", [target_chunk_id]),
+            (AgentQuery(query_str="Apple net sales", top_k=3), [target_chunk_id]),
         ]
         result = orch.benchmark_retrieval(labeled_queries, k=5)
         assert isinstance(result, RetrievalBenchmarkResult)
-        assert result.query_count == 1
+        assert result.query_count == 2
         assert result.avg_latency_ms >= 0.0
+
+    def test_orchestrator_semantic_cache_none_save(self) -> None:
+        orch = FinancialPipelineOrchestrator()
+        orch.semantic_cache = None
+        assert orch.save_semantic_cache("some_path.json") is None
