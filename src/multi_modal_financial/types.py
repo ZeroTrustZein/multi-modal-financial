@@ -710,7 +710,7 @@ class AgentQuery(BaseFinancialModel):
     reranker_strategy: RerankerStrategy | None = None
     reranker_top_k: int | None = None
     reranker_threshold: float | None = None
-    retrieval_strategy: RetrievalStrategy = RetrievalStrategy.HYBRID_RRF
+    retrieval_strategy: RetrievalStrategy | None = None
     use_semantic_cache: bool = True
     similarity_threshold: float | None = None
 

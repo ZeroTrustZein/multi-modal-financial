@@ -186,7 +186,7 @@ class TestFinancialPipelineOrchestrator:
         assert orch2.semantic_cache is not None
         assert len(orch2.semantic_cache._entries) >= 1
 
-    def test_orchestrator_benchmark_retrieval(self, setup_sample_corpus: Path):
+    def test_orchestrator_benchmark_retrieval(self, setup_sample_corpus: Path) -> None:
         orch = FinancialPipelineOrchestrator()
         docs = orch.ingest_files(setup_sample_corpus)
         target_chunk_id = docs[0].chunks[0].chunk_id
