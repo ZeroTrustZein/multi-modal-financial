@@ -12,7 +12,7 @@ Financial document analysis imposes rigorous demands that generic Retrieval-Augm
 3. **Zero-Tolerance Hallucination & Auditability**: Financial assertions require verifiable sentence-level citation provenance linking directly back to audited source documents and exact table cells.
 4. **Statement Reconciliation**: Numeric tables must be validated against accounting invariants ($Assets = Liabilities + Equity$) before indexing to filter corrupt OCR or malformed data.
 
-To solve these challenges, `multi-modal-financial` is designed as a modular, decoupled pipeline of 8 core subsystems:
+To solve these challenges, `multi-modal-financial` is designed as a modular, decoupled pipeline of 9 core subsystems governed by runtime protocols:
 
 ```
                                   [ Financial Filings ]
@@ -40,18 +40,27 @@ To solve these challenges, `multi-modal-financial` is designed as a modular, dec
                       └───────────────────────┼─────────────────────┘
                                               │
                       ┌───────────────────────┼─────────────────────┐
-                      │ Storage & Caching     ▼                     │
+                      │ Multi-Tier Storage    ▼                     │
                       │ - EmbeddingCache (LRU)  IndexPersistence    │
                       │ - QueryCache (TTL)      (Directory / ZIP)   │
+                      │ - SemanticCache (LRU/LFU/FIFO + Vectors)    │
                       └───────────────────────┬─────────────────────┘
                                               │
        [ User Query ]                         ▼
              │        ┌─────────────────────────────────────────────┐
-             ▼        │      Dual-Mode Retrieval & Reranking        │
-     ┌──────────────┐ │  - Reciprocal Rank Fusion (RRF)             │
+             ▼        │      Multi-Strategy Hybrid Retrieval        │
+     ┌──────────────┐ │  - Reciprocal Rank Fusion (RRF, k=60)       │
      │ QueryRouter  │ │  - Convex Alpha Blend (BM25 + Dense)        │
-     │ Intent/Ticker│─┼─►- FinancialReranker (Modality & Ticker)    │
+     │ Intent/Ticker│─┼─►- Pure Dense Semantic / Pure Sparse Lexical│
      └──────────────┘ └──────────────────────┬──────────────────────┘
+                                             │ Initial Candidate Pool
+                                             ▼
+                      ┌─────────────────────────────────────────────┐
+                      │ Neural Cross-Encoder & Hybrid Reranking     │
+                      │  - FinancialCrossEncoder (Cross-Attention)  │
+                      │  - FinancialReranker (Modality & Ticker)    │
+                      │  - RerankExplanation (Factor Attribution)   │
+                      └──────────────────────┬──────────────────────┘
                                              │ Top-K Scored Chunks
                                              ▼
                       ┌─────────────────────────────────────────────┐
@@ -157,9 +166,9 @@ The dense vector subsystem maps financial chunks into a $d$-dimensional continuo
 
 ---
 
-## 4. Dual-Mode Retrieval & Reranking Core
+## 4. Multi-Strategy Hybrid Retrieval & Neural Cross-Encoder Reranking Core
 
-`HybridRetriever` provides two distinct fusion strategies to combine sparse lexical scores with dense semantic vectors.
+`multi-modal-financial` implements a two-stage retrieval and reranking pipeline combining high-recall multi-strategy candidate generation with precision neural cross-encoder rescoring and domain heuristic boosting.
 
 ```
        Query: "operating margin Q3 2025"
@@ -171,50 +180,143 @@ The dense vector subsystem maps financial chunks into a $d$-dimensional continuo
            │                     │
            └──────────┬──────────┘
                       ▼
-             [ Fusion Engine ]
-         ├── Reciprocal Rank Fusion (RRF)
-         └── Convex Alpha Combination (Min-Max / Z-Score)
+             [ Retrieval Engine ]
+         ├── Reciprocal Rank Fusion (RRF, k=60)
+         ├── Convex Alpha Blending (Min-Max / Z-Score)
+         ├── Pure Dense Semantic Retrieval
+         └── Pure Sparse Lexical Retrieval
                       │
                       ▼
-             [ Financial Reranker ]
-         ├── Modality Boosting (Table +15%, Metric +20%)
-         ├── Ticker / Period Match Boosting (+25%)
-         └── Factual Query Term Exact Boosting (+15%)
+         Initial Candidate Set (fetch_limit = max(4k, 30))
+                      │
+                      ▼
+        [ Second-Stage Reranking Engine ]
+         ├── FinancialCrossEncoder: Pairwise Cross-Attention Simulation
+         │   ├── Financial Concept Overlap (Weights: revenue=1.5, eps=1.5, ...)
+         │   ├── N-gram Sequence Alignment
+         │   └── Numeric / Monetary Fact Congruence
+         ├── Modality Boosting (Table +0.20, Metric +0.25, Figure +0.15)
+         ├── Temporal Alignment (Fiscal Year +0.20, Quarter Period +0.20)
+         └── Score Threshold Filtering & Top-K Pruning
+                      │
+                      ▼
+             [ RerankExplanation ]
+         (Initial Rank -> Final Rank, Score Delta, Component Factors)
                       │
                       ▼
              Top-K Scored Chunks
 ```
 
-### 4.1 Reciprocal Rank Fusion (RRF)
-RRF merges ranked lists without requiring score calibration across different distributions:
+### 4.1 Multi-Strategy Retrieval Core (`HybridRetriever`, `HybridSearchConfig`)
+The first retrieval stage generates candidate document chunks from `HybridIndex` using four configurable strategies defined by `RetrievalStrategy`:
 
-$$\text{RRF\_Score}(d) = \sum_{m \in M} \frac{w_m}{k + r_m(d)}$$
+1. **Reciprocal Rank Fusion (`HYBRID_RRF`)**:
+   Merges ordinal rank positions across disparate lexical and semantic score distributions without calibration artifacts:
 
-Where:
-- $M = \{\text{BM25}, \text{Dense}\}$
-- $r_m(d) \in \{1, 2, \dots, K\}$ is the 1-based ordinal rank of document $d$ in system $m$.
-- $k$ is the smoothing constant (default $k = 60$) that mitigates outlier impact.
-- $w_m$ is the modality weight (default $w_{\text{dense}} = 1.0, w_{\text{bm25}} = 1.0$).
+   $$\text{RRF\_Score}(d) = \sum_{m \in M} \frac{w_m}{k + r_m(d)}$$
 
-### 4.2 Convex Alpha Combination
-When calibrated scores are preferred, scores are normalized via Min-Max or Z-Score:
+   Where:
+   - $M = \{\text{BM25}, \text{Dense}\}$
+   - $r_m(d) \in \{1, 2, \dots, K\}$ is the 1-based ordinal rank of chunk $d$ in subsystem $m$.
+   - $k$ is the smoothing constant (default $k = 60$, configurable via `rrf_k`).
+   - $w_m$ represents modality retrieval weights (default $w_{\text{dense}} = 1.0, w_{\text{bm25}} = 1.0$).
 
-$$\tilde{S}(d) = \frac{S(d) - S_{\min}}{S_{\max} - S_{\min} + \epsilon}$$
+2. **Convex Alpha Combination (`HYBRID_CONVEX`)**:
+   Blends calibrated scores after Min-Max or Z-Score standardization:
 
-The final retrieval score is computed as:
+   $$\tilde{S}(d) = \frac{S(d) - S_{\min}}{S_{\max} - S_{\min} + \epsilon}$$
 
-$$S_{\text{hybrid}}(d) = \alpha \cdot \tilde{S}_{\text{dense}}(d) + (1 - \alpha) \cdot \tilde{S}_{\text{bm25}}(d)$$
+   $$S_{\text{hybrid}}(d) = \alpha \cdot \tilde{S}_{\text{dense}}(d) + (1 - \alpha) \cdot \tilde{S}_{\text{bm25}}(d)$$
 
-- $\alpha = 0.0$: Pure lexical BM25 (ideal for precise financial line-item search).
-- $\alpha = 1.0$: Pure dense vector semantic search (ideal for qualitative questions).
-- $\alpha = 0.5$: Balanced hybrid retrieval (default).
+   - $\alpha = 0.0$: Pure lexical BM25 (ideal for precise financial line-item search).
+   - $\alpha = 1.0$: Pure dense vector semantic search (ideal for conceptual thematic inquiries).
+   - $\alpha = 0.5$: Balanced hybrid retrieval (default).
 
-### 4.3 Financial Cross-Heuristic Reranker (`FinancialReranker`)
-The reranker applies multi-modal domain heuristics to the candidate set:
-1. **Modality Weighting**: Prioritizes structured tables and metric chunks over narrative prose when the query targets quantitative metrics:
-   $$\text{Score} \leftarrow \text{Score} \times 1.20 \quad (\text{if Table / Metric chunk})$$
-2. **Ticker & Period Alignment**: Documents matching both the query's identified ticker and fiscal year receive a $+25\%$ score multiplier.
-3. **Exact Token Coverage**: Chunks containing the exact query numeric tokens or accounting line-item headers receive a $+15\%$ relevance boost.
+3. **Dense Semantic Only (`DENSE`)**:
+   Bypasses lexical search, ranking chunks purely by unit-normalized cosine similarity:
+   $$\text{Sim}(q, d) = \sum_{i=1}^{\text{dim}} q_i \cdot d_i$$
+
+4. **Sparse Lexical Only (`SPARSE`)**:
+   Bypasses dense vectors, returning candidates strictly ordered by normalized Okapi BM25 relevance.
+
+**Metadata Filtering & Candidate Constraints**:
+`HybridRetriever` filters candidate chunk IDs prior to scoring via `index.filter_chunk_ids()`, matching:
+- `ticker`: Filters strictly to chunks attributed to the specified equity ticker.
+- `period`: Filters to designated quarter or fiscal year (`Q1`-`Q4`, `FY`).
+- `year`: Filters to specific filing reporting years.
+- `modal_type`: Filters to desired modalities (`table`, `text`, `figure`, `metric`).
+- `allowed_chunk_ids`: Whitelist constraint defined via `HybridSearchConfig`.
+
+---
+
+### 4.2 Neural Cross-Encoder Scoring Architecture (`FinancialCrossEncoder`)
+Conforming to `CrossEncoderProtocol`, `FinancialCrossEncoder` simulates transformer-style cross-attention by jointly scoring candidate $(Q, D)$ pairs over financial semantic interactions:
+
+1. **Financial Concept Weighted Term Overlap**:
+   Terms are matched against a curated financial dictionary where critical disclosures carry elevated weights:
+
+   $$S_{\text{term}} = \frac{\sum_{t \in Q \cap D} w_t}{\sum_{t \in Q} w_t}$$
+
+   | Financial Concept | Weight $w_t$ | Financial Concept | Weight $w_t$ |
+   |-------------------|--------------|-------------------|--------------|
+   | `revenue`, `income`, `eps`, `ebitda` | $1.5$ | `sales`, `profit`, `margin` | $1.4$ |
+   | `operating`, `cash`, `flow`, `capex`, `guidance` | $1.3$ | `debt`, `equity`, `asset`, `liability`, `growth` | $1.2$ |
+   | Default unlisted terms | $1.0$ | | |
+
+2. **N-Gram Sequence Alignment**:
+   Measures consecutive bi-gram overlap between query tokens $B_Q$ and document tokens $B_D$:
+   $$S_{\text{ngram}} = \frac{|B_Q \cap B_D|}{|B_Q|} \quad (|B_Q| \ge 2)$$
+
+3. **Numeric & Monetary Fact Congruence**:
+   Quantifies exact matching between numerical figures $N_Q$ in the query (e.g., `$1,250M`, `41.6%`, `2025`) and numbers $N_D$ present in the candidate chunk:
+   $$S_{\text{num}} = \frac{|N_Q \cap N_D|}{|N_Q|}$$
+
+4. **Joint Logit & Sigmoid Probability Mapping**:
+   The individual factors are combined into a joint relevance logit and mapped to $[0, 1]$ via a clamped logistic sigmoid:
+
+   $$\text{logit}(Q, D) = 2.5 \cdot S_{\text{term}} + 1.5 \cdot S_{\text{ngram}} + 1.2 \cdot S_{\text{num}} - 1.0$$
+
+   $$P(\text{rel} \mid Q, D) = \sigma(\text{logit}) = \frac{1}{1 + \exp\left(-\max(\min(\text{logit}, 10.0), -10.0)\right)}$$
+
+---
+
+### 4.3 Second-Stage Domain Reranker (`FinancialReranker`)
+Conforming to `RerankerProtocol`, `FinancialReranker` refines initial retrieval candidates using neural cross-attention, domain heuristics, and modality bonuses configured via `RerankerConfig`:
+
+1. **Domain Heuristic Scoring**:
+   Combines base retrieval score with lexical, numerical, and temporal bonuses:
+   $$S_{\text{heur}} = S_{\text{init}} + 0.30 \cdot \text{Overlap}_{\text{lex}} + 0.35 \cdot \text{Overlap}_{\text{num}} + \text{Bonus}_{\text{temporal}}$$
+   Where $\text{Bonus}_{\text{temporal}} = 0.20$ if fiscal years match $+ 0.20$ if reporting periods (`Q1`-`Q4`, `FY`) match.
+
+2. **Modality Boosting**:
+   Applies structural incentives depending on chunk content type and query intent:
+   - **Table Chunk**: $+0.20$ (additional $+0.10$ if query contains keywords: `table`, `compare`, `margin`, `statement`, `breakdown`).
+   - **Metric Chunk**: $+0.25$ bonus for pre-extracted atomic financial metrics.
+   - **Figure / Chart Chunk**: $+0.15$ (additional $+0.10$ if query contains keywords: `chart`, `figure`, `graph`, `trend`, `trajectory`).
+
+3. **Strategy Blending (`RerankerStrategy`)**:
+   - `CROSS_ENCODER`: Uses pure normalized cross-encoder predictions plus modality bonuses:
+     $$S_{\text{final}} = S_{\text{ce}} + \text{Bonus}_{\text{modality}}$$
+   - `HYBRID`: Blends neural cross-encoder and domain heuristics via configurable weights:
+     $$S_{\text{final}} = (w_{\text{ce}} \cdot S_{\text{ce}}) + (w_{\text{heur}} \cdot S_{\text{heur}}) + \text{Bonus}_{\text{modality}}$$
+     *(Defaults: $w_{\text{ce}} = 0.7$, $w_{\text{heur}} = 0.3$)*
+   - `MODALITY_HEURISTIC`: Applies domain heuristics and modality bonuses to initial retrieval scores.
+   - `NONE`: Preserves initial retrieval candidate ordering.
+
+4. **Candidate Pruning & Threshold Filtering**:
+   Drops any candidate with $S_{\text{final}} < \text{score\_threshold}$ (default $0.0$) and caps results to `top_k` (or `reranker_top_k`).
+
+---
+
+### 4.4 Reranking Explainability Engine (`RerankExplanation`)
+For auditing and regulatory transparency, every reranked candidate emits a structured `RerankExplanation`:
+- `chunk_id`: Unique chunk identifier.
+- `initial_rank` $\to$ `final_rank`: Direct rank shift observation (e.g. `#4 -> #1`).
+- `initial_score` and `final_score`: Magnitude of score delta ($\Delta$).
+- `cross_encoder_score`: Raw or normalized neural cross-attention score.
+- `heuristic_score`: Composite domain heuristic score.
+- `modality_bonus`: Additive structural bonus.
+- `reasons`: Human-interpretable factors (e.g., `["Hybrid: CE=1.0000 (w=0.7) + Heur=0.4500 (w=0.3)", "Lexical overlap: 0.86", "Period match: Q3", "Table modality boost: +0.20"]`).
 
 ---
 
@@ -325,25 +427,181 @@ Performs horizontal financial analysis across reporting periods (YoY or QoQ):
 
 ---
 
-## 8. Storage, Caching & Persistence
+## 8. Storage, Multi-Tier Caching & Persistence
 
-### 8.1 Dual LRU & TTL Caching (`EmbeddingCache`, `QueryCache`)
-- **`EmbeddingCache`**: Thread-safe Least-Recently-Used (LRU) cache for dense vector embeddings, avoiding re-computation for repeated queries or document chunks.
-- **`QueryCache`**: Query response cache with configurable Time-To-Live (TTL, default 3,600s) and composite hashing over `(query_str, ticker, period, year, top_k, alpha)`.
+`multi-modal-financial` provides an enterprise-grade multi-tier caching hierarchy and atomic checkpoint persistence to minimize latency and ensure zero cold-start penalties in production environments.
 
-### 8.2 Index Persistence (`IndexPersistence`)
-- **Directory Persistence**: Saves `HybridIndex` state into modular files:
-  - `manifest.json`: Versioning, document/chunk counts, vocabulary size.
-  - `documents.json`: Serialized document graphs and metadata.
-  - `chunks.json`: Multi-modal chunk data and pre-computed numeric values.
-  - `bm25_index.json`: Inverted index frequencies, document lengths, IDF tables.
-  - `vector_index.json`: Vector coordinate matrices and document mappings.
-- **Compressed ZIP Export**: Bundles the entire index into a single self-contained `.zip` archive for distribution or snapshot backup.
+### 8.1 Multi-Tier Caching Subsystem
+
+```
+                         Incoming User Query
+                                  │
+                                  ▼
+               ┌─────────────────────────────────────┐
+               │ Tier 1: QueryCache (Exact TTL Hash) │
+               │ Hash: (query, ticker, period, top_k)│
+               └──────────────────┬──────────────────┘
+                                  │ Miss
+                                  ▼
+               ┌─────────────────────────────────────┐
+               │ Tier 2: SemanticCache               │
+               │  ├── Fast-Path Exact Lookup (O(1))  │
+               │  └── Vector Similarity Search       │
+               │      (Cosine / Euclidean / Dot)     │
+               └──────────────────┬──────────────────┘
+                                  │ Miss
+                                  ▼
+               ┌─────────────────────────────────────┐
+               │ Full RAG Pipeline & Reranking Core  │
+               │  ├── Tier 3: EmbeddingCache (LRU)   │
+               │  │   (Reuses projection vectors)    │
+               │  └── Hybrid Search & Verification   │
+               └─────────────────────────────────────┘
+```
+
+1. **Embedding Cache (`EmbeddingCache`)**:
+   - Thread-safe Least-Recently-Used (LRU) in-memory cache for dense vector embeddings.
+   - Keys: SHA-256 digest of normalized chunk or query string.
+   - Values: Pre-computed unit-normalized NumPy float32 embedding vectors.
+   - Batch computation with fallback via `get_or_compute(texts, compute_fn)`.
+
+2. **Exact Query Cache (`QueryCache`)**:
+   - In-memory LRU cache storing full `AgentResponse` objects.
+   - Composite Key: `(query_str, ticker, period, year, top_k, alpha)`.
+   - Expiration: Configurable Time-To-Live (TTL, default 3,600s).
+
+3. **Neural Semantic Cache (`SemanticCache`)**:
+   Conforming to `SemanticCacheProtocol`, `SemanticCache` caches query-response pairs and evaluates semantic vector proximity:
+   - **Exact Match Fast Path ($O(1)$)**: Checks normalized query string hash index before executing vector similarity scans, ensuring sub-millisecond retrieval on identical queries.
+   - **Vector Proximity Search**: Computes similarity between the incoming query vector and active cache entry embeddings:
+     - **Cosine Similarity** (default):
+       $$\text{Sim}_{\cos}(u, v) = \frac{u \cdot v}{\|u\|_2 \|v\|_2}$$
+     - **Euclidean Similarity**:
+       $$\text{Sim}_{\text{euc}}(u, v) = \frac{1}{1 + \|u - v\|_2}$$
+     - **Dot Product**:
+       $$\text{Sim}_{\text{dot}}(u, v) = u \cdot v$$
+   - **Similarity Gating**: Cache hits require $\text{Sim} \ge \tau$ (default $\tau = 0.85$, configurable via `SemanticCacheConfig.similarity_threshold`). Hits return a deep copy of `AgentResponse` marked with `cache_hit=True`, `cache_type=CacheHitType.SEMANTIC`, and the exact similarity score.
+   - **Configurable Eviction Policies (`CacheEvictionPolicy`)**:
+     - `LRU` (Least Recently Used): Evicts the entry with the oldest `last_accessed_at` timestamp.
+     - `LFU` (Least Frequently Used): Evicts the entry with the lowest `access_count`, breaking ties by `last_accessed_at`.
+     - `FIFO` (First In, First Out): Evicts the earliest inserted entry by `created_at`.
+   - **TTL Lifecycle & Lazy/Eager Purge**: Entries beyond `ttl_seconds` are lazily removed upon search scans and proactively purged during capacity eviction in `put()`.
+   - **Telemetry Monitoring (`SemanticCacheStats`)**: Captures operational telemetry: `total_queries`, `exact_hits`, `semantic_hits`, `misses`, `evictions`, `entry_count`, `max_entries`, `hit_rate`, and `avg_lookup_latency_ms`.
+
+---
+
+### 8.2 Checkpoint Index & Cache Persistence (`IndexPersistence`)
+
+`IndexPersistence` serializes the complete state of `HybridIndex` and `SemanticCache` to disk or compressed ZIP archives:
+
+```
+persisted_index/ (or index_archive.zip)
+├── manifest.json         # Checksum, version, document/chunk counts, vocabulary size, cache metadata
+├── documents.json        # Serialized Document models, metadata, and section boundaries
+├── chunks.json           # Chunk text, modalities, page numbers, and pre-extracted metric values
+├── bm25.json             # Inverted index frequencies, document lengths, IDF tables, params (k1, b)
+├── vectors.npz           # Compressed NumPy array of dense vectors and document ID mappings
+└── semantic_cache.json   # Serialized SemanticCache entries, query vectors, responses, and access stats
+```
+
+- **Checksum Validation**: Computes a SHA-256 digest across all constituent files during serialization, preventing corruption during cold starts.
+- **Archive Portability**: Compressed `.zip` archives can be transferred across cloud environments or pre-baked into container images for zero-latency startup.
 
 ---
 
 ## 9. Master Orchestration (`FinancialPipelineOrchestrator`)
 
-The `FinancialPipelineOrchestrator` integrates all eight subsystems into a unified, high-level programmatic interface:
-- Manages caching, persistence, ingestion, indexing, query routing, retrieval fusion, citation verification, audit reporting, and financial analytics.
-- Exposes diagnostic status inspections (`status()`) returning live subsystem statistics.
+The `FinancialPipelineOrchestrator` integrates all nine subsystems into a unified, enterprise-ready controller configured via `OrchestratorConfig`:
+- Manages multi-tier caching (`EmbeddingCache`, `QueryCache`, `SemanticCache`), persistence checkpoints, and document ingestion.
+- Automates text cleaning, table structural validation, and GAAP statement reconciliation prior to indexing.
+- Coordinates query routing, multi-strategy hybrid retrieval (`HybridRetriever`), neural cross-encoder reranking (`FinancialReranker`), and citation grounding verification (`GroundingVerifier`).
+- Provides financial ratio analytics (`FinancialRatioCalculator`) and horizontal period variance comparisons (`PeriodComparator`).
+- Generates batch compliance reports (`GroundingAuditor`).
+- Exposes diagnostic status inspections (`status()`) returning live metrics across documents, chunks, vocabulary, caches, reranker, and retrieval strategies.
+
+---
+
+## 10. Runtime Protocols & Abstract Interface Architecture
+
+To ensure strict architectural decoupling, maintainability, and clean dependency inversion, all primary subsystems in `multi-modal-financial` conform to PEP 544 `@runtime_checkable` protocols defined in `multi_modal_financial.interfaces`:
+
+```python
+from multi_modal_financial.interfaces import (
+    CrossEncoderProtocol,
+    DenseIndexProtocol,
+    RerankerProtocol,
+    RetrieverProtocol,
+    SemanticCacheProtocol,
+    SparseIndexProtocol,
+)
+```
+
+### 10.1 Protocol Specifications
+
+1. **`CrossEncoderProtocol`**:
+   Abstract interface for neural cross-attention models:
+   ```python
+   def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+       """Compute cross-attention relevance scores for (query, document) pairs."""
+       ...
+   ```
+
+2. **`RerankerProtocol`**:
+   Abstract interface for candidate rerankers:
+   ```python
+   def rerank(
+       self,
+       query: str | AgentQuery,
+       candidates: list[ScoredChunk],
+       top_k: int | None = None,
+   ) -> list[ScoredChunk]:
+       """Rerank candidates based on neural and/or domain financial salience."""
+       ...
+   ```
+
+3. **`SemanticCacheProtocol`**:
+   Abstract interface for semantic query and response caching:
+   ```python
+   def get(
+       self,
+       query: str,
+       query_vector: list[float] | None = None,
+       similarity_threshold: float | None = None,
+   ) -> SemanticCacheLookupResult | None: ...
+   def put(
+       self,
+       query: str,
+       response: AgentResponse,
+       query_vector: list[float] | None = None,
+   ) -> None: ...
+   def clear(self) -> None: ...
+   def stats(self) -> SemanticCacheStats: ...
+   ```
+
+4. **`DenseIndexProtocol`**:
+   Abstract interface for dense vector indexing:
+   ```python
+   def search(self, query: str | list[float], top_k: int = 10) -> list[tuple[str, float]]: ...
+   def add(self, chunk_id: str, text: str, vector: list[float] | None = None) -> None: ...
+   ```
+
+5. **`SparseIndexProtocol`**:
+   Abstract interface for lexical BM25 indexing:
+   ```python
+   def search(self, query: str, top_k: int = 10) -> list[tuple[str, float]]: ...
+   def add(self, chunk_id: str, text: str) -> None: ...
+   ```
+
+6. **`RetrieverProtocol`**:
+   Abstract interface for hybrid multi-modal retrieval engines:
+   ```python
+   def retrieve(
+       self, query: str | AgentQuery, top_k: int = 10, alpha: float = 0.5
+   ) -> list[ScoredChunk]: ...
+   ```
+
+### 10.2 Architectural Benefits
+- **Zero-Cost Runtime Validation**: Applications can verify implementations dynamically using `isinstance(custom_model, CrossEncoderProtocol)` or `isinstance(custom_cache, SemanticCacheProtocol)`.
+- **Pluggable Neural Backends**: Enterprise deployments can substitute local mock cross-encoders with GPU-accelerated Hugging Face transformers, ONNX Runtime engines, or remote inference endpoints without modifying pipeline code.
+- **Modular Storage Tiers**: The semantic cache and indexing engines can be backed by Redis, Faiss, Qdrant, or Pinecone by implementing the respective protocol methods.
+- **Isolated Testing & Mocking**: Unit tests verify interfaces without requiring neural model checkpoints or external databases.

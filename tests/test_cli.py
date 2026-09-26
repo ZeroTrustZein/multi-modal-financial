@@ -124,6 +124,272 @@ class TestCLI:
         assert "BM25 (Sparse)" in result.output
         assert "Hybrid RRF + Reranker" in result.output
 
+    def test_info_command_with_status(self, runner: CliRunner):
+        """Test info command with --status flag showing cache diagnostics."""
+        result = runner.invoke(cli, ["info", "--status"])
+        assert result.exit_code == 0
+        assert "Multi-Modal Financial RAG - Architecture" in result.output
+        assert "Semantic Cache Telemetry" in result.output
+
+    def test_query_with_reranker_and_retrieval_strategies(self, runner: CliRunner):
+        """Test query command across various reranking and retrieval strategies."""
+        for strat in ["hybrid_rrf", "hybrid_convex", "dense", "sparse"]:
+            res = runner.invoke(
+                cli,
+                [
+                    "query",
+                    "ACME revenue growth",
+                    "--strategy",
+                    strat,
+                    "--reranker-strategy",
+                    "cross_encoder",
+                ],
+            )
+            assert res.exit_code == 0
+            assert "Synthesized Response" in res.output
+
+        for r_strat in ["heuristic", "cross_encoder", "hybrid"]:
+            res = runner.invoke(
+                cli,
+                [
+                    "query",
+                    "ACME revenue growth",
+                    "--reranker-strategy",
+                    r_strat,
+                ],
+            )
+            assert res.exit_code == 0
+            assert "Synthesized Response" in res.output
+
+    def test_query_with_explain(self, runner: CliRunner):
+        """Test query command with --explain flag."""
+        result = runner.invoke(cli, ["query", "ACME Q3 operating income", "--explain"])
+        assert result.exit_code == 0
+        assert "Synthesized Response" in result.output
+        assert "Reranker Scoring & Explanations" in result.output
+
+    def test_query_threshold_and_top_k(self, runner: CliRunner):
+        """Test query with reranker thresholds and custom top-k."""
+        result = runner.invoke(
+            cli,
+            [
+                "query",
+                "ACME gross margin",
+                "--reranker-top-k",
+                "2",
+                "--reranker-threshold",
+                "0.05",
+                "--no-rerank",
+                "--no-semantic-cache",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "Synthesized Response" in result.output
+
+    def test_cache_stats_command(self, runner: CliRunner):
+        """Test cache-stats CLI command."""
+        result = runner.invoke(cli, ["cache-stats"])
+        assert result.exit_code == 0
+        assert "Semantic Cache Telemetry" in result.output
+        assert "Total Lookups" in result.output
+        assert "Exact Hits" in result.output
+
+    def test_ratios_command(self, runner: CliRunner, tmp_path: Path):
+        """Test ratios CLI command on a document."""
+        doc_file = tmp_path / "financials.txt"
+        doc_file.write_text(
+            """
+            Statement of Operations for Q3 2025:
+            | Metric | Amount |
+            | Total Revenue | $5,000M |
+            | Gross Profit | $2,500M |
+            | Operating Income | $1,250M |
+            | Net Income | $1,000M |
+            """,
+            encoding="utf-8",
+        )
+        result = runner.invoke(cli, ["ratios", str(doc_file)])
+        assert result.exit_code == 0
+        assert "Financial Ratios Summary" in result.output
+        assert "Gross Margin" in result.output
+
+    def test_compare_command(self, runner: CliRunner, tmp_path: Path):
+        """Test compare CLI command between two filing periods."""
+        doc1 = tmp_path / "q1_filing.txt"
+        doc1.write_text(
+            """
+            | Metric | 2024 |
+            | Revenue | $1,000M |
+            | Net Income | $200M |
+            """,
+            encoding="utf-8",
+        )
+        doc2 = tmp_path / "q2_filing.txt"
+        doc2.write_text(
+            """
+            | Metric | 2025 |
+            | Revenue | $1,200M |
+            | Net Income | $250M |
+            """,
+            encoding="utf-8",
+        )
+        result = runner.invoke(cli, ["compare", str(doc1), str(doc2)])
+        assert result.exit_code == 0
+        assert "Financial Period Comparison" in result.output
+
+    def test_audit_command(self, runner: CliRunner):
+        """Test audit CLI command."""
+        result = runner.invoke(cli, ["audit", "What was revenue for ACM in Q3?"])
+        assert result.exit_code == 0
+        assert "Grounding Compliance Audit Report" in result.output
+        assert "Total Queries Audited" in result.output
+
+    def test_audit_command_default_queries(self, runner: CliRunner):
+        """Test audit CLI command with default query set."""
+        result = runner.invoke(cli, ["audit"])
+        assert result.exit_code == 0
+        assert "Grounding Compliance Audit Report" in result.output
+
+    def test_ratios_command_invalid_doc(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Test ratios command when file contains no valid parsed document."""
+        dummy = tmp_path / "dummy.txt"
+        dummy.write_text("irrelevant content", encoding="utf-8")
+        from multi_modal_financial.pipeline.orchestrator import FinancialPipelineOrchestrator
+
+        monkeypatch.setattr(FinancialPipelineOrchestrator, "ingest_files", lambda self, p: [])
+        result = runner.invoke(cli, ["ratios", str(dummy)])
+        assert result.exit_code == 0
+        assert "No valid document parsed from path" in result.output
+
+    def test_compare_command_failed_loading(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Test compare command when document loading fails."""
+        f1 = tmp_path / "doc1.txt"
+        f2 = tmp_path / "doc2.txt"
+        f1.write_text("data 1", encoding="utf-8")
+        f2.write_text("data 2", encoding="utf-8")
+        from multi_modal_financial.pipeline.orchestrator import FinancialPipelineOrchestrator
+
+        monkeypatch.setattr(FinancialPipelineOrchestrator, "ingest_files", lambda self, p: [])
+        result = runner.invoke(cli, ["compare", str(f1), str(f2)])
+        assert result.exit_code == 0
+        assert "Failed to load one or both documents for comparison" in result.output
+
+    def test_formatters_unit(self):
+        """Direct tests for formatters module components."""
+        from multi_modal_financial.analytics.comparator import VarianceResult
+        from multi_modal_financial.analytics.ratios import RatioSummary
+        from multi_modal_financial.cli.formatters import (
+            format_audit_table,
+            format_benchmark_table,
+            format_cache_stats_table,
+            format_comparison_table,
+            format_ratios_table,
+            format_rerank_explanations_table,
+            format_response_panel,
+        )
+        from multi_modal_financial.grounding.audit import GroundingAuditReport
+        from multi_modal_financial.types import (
+            CacheHitType,
+            RerankExplanation,
+            SemanticCacheStats,
+        )
+
+        # 1. Rerank explanations table
+        exp = RerankExplanation(
+            chunk_id="c1",
+            initial_rank=1,
+            final_rank=1,
+            initial_score=0.8,
+            final_score=0.95,
+            reasons=["Lexical overlap: 0.50"],
+        )
+        tbl_exp = format_rerank_explanations_table([exp])
+        assert tbl_exp.title == "Reranker Scoring & Explanations"
+
+        tbl_empty_exp = format_rerank_explanations_table([])
+        assert tbl_empty_exp.title == "Reranker Scoring & Explanations"
+
+        # 2. Cache stats table
+        stats = SemanticCacheStats(
+            total_queries=10,
+            exact_hits=2,
+            semantic_hits=3,
+            misses=5,
+            evictions=0,
+            entry_count=5,
+            max_entries=100,
+            hit_rate=0.5,
+            avg_lookup_latency_ms=1.2,
+        )
+        tbl_cache = format_cache_stats_table(stats)
+        assert tbl_cache.title == "Semantic Cache Telemetry"
+
+        # 3. Ratios table
+        ratios = RatioSummary(
+            gross_margin_pct=50.0,
+            operating_margin_pct=25.0,
+            net_margin_pct=20.0,
+            current_ratio=2.0,
+        )
+        tbl_ratios = format_ratios_table(ratios, doc_id="TEST_DOC")
+        assert "TEST_DOC" in str(tbl_ratios.title)
+
+        # 4. Comparison table
+        variance = VarianceResult(
+            metric_name="Revenue",
+            base_value=100.0,
+            compare_value=120.0,
+            absolute_change=20.0,
+            percentage_change=20.0,
+            trend="UP",
+        )
+        tbl_comp = format_comparison_table([variance], base_id="Q1", comp_id="Q2")
+        assert "Q1 vs Q2" in str(tbl_comp.title)
+
+        # 5. Audit table
+        rep = GroundingAuditReport(
+            total_queries=2,
+            total_claims=4,
+            supported_claims=4,
+            partially_supported_claims=0,
+            unsupported_claims=0,
+            hallucination_rate=0.0,
+            mean_confidence=0.95,
+            compliance_status="PASS",
+        )
+        tbl_audit = format_audit_table(rep)
+        assert tbl_audit.title == "Grounding Compliance Audit Report"
+
+        # 6. Response panel with cache hit
+        panel = format_response_panel(
+            answer="Net sales was $100M",
+            execution_time_ms=12.5,
+            confidence=0.95,
+            cache_hit=True,
+            cache_type=CacheHitType.EXACT,
+            retrieval_strategy="sparse",
+            reranker_strategy="heuristic",
+        )
+        assert panel.title is not None and "12.5 ms" in str(panel.title)
+        assert panel.subtitle is not None and "Cache: exact" in str(panel.subtitle)
+
+        # 7. Benchmark table with all options
+        tbl_bench = format_benchmark_table(
+            bm25_r1=0.8,
+            bm25_mrr=0.85,
+            hybrid_r1=0.95,
+            hybrid_mrr=0.98,
+            dense_r1=0.82,
+            dense_mrr=0.86,
+            convex_r1=0.88,
+            convex_mrr=0.91,
+        )
+        assert tbl_bench.title == "Benchmark Results (Recall@1 & MRR)"
+
     def test_main_module_execution(self, monkeypatch):
         """Test python -m multi_modal_financial entrypoint."""
         monkeypatch.setattr(sys, "argv", ["multi_modal_financial", "--help"])

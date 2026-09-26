@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+import time
 from enum import Enum
 from typing import Any, TypeVar
 
@@ -112,6 +113,39 @@ class GroundingStatus(str, Enum):
     PARTIALLY_SUPPORTED = "partially_supported"
     UNSUPPORTED = "unsupported"
     CONTRADICTED = "contradicted"
+
+
+class RerankerStrategy(str, Enum):
+    """Execution strategy for reranking retrieval candidates."""
+
+    HEURISTIC = "heuristic"
+    CROSS_ENCODER = "cross_encoder"
+    HYBRID = "hybrid"
+
+
+class RetrievalStrategy(str, Enum):
+    """Retrieval ranking and fusion mode."""
+
+    DENSE = "dense"
+    SPARSE = "sparse"
+    HYBRID_RRF = "hybrid_rrf"
+    HYBRID_CONVEX = "hybrid_convex"
+
+
+class CacheEvictionPolicy(str, Enum):
+    """Eviction algorithm for bounded caches."""
+
+    LRU = "lru"
+    LFU = "lfu"
+    FIFO = "fifo"
+
+
+class CacheHitType(str, Enum):
+    """Categorization of cache lookup hit quality."""
+
+    EXACT = "exact"
+    SEMANTIC = "semantic"
+    NONE = "none"
 
 
 def scale_multiplier(scale: str | UnitScale | None) -> float:
@@ -624,7 +658,10 @@ class ScoredChunk(BaseFinancialModel):
     sparse_score: float = 0.0
     rank: int = 0
     rerank_score: float | None = None
+    cross_encoder_score: float | None = None
+    semantic_score: float | None = None
     modality_bonus: float = 0.0
+    explanation: str | None = None
 
 
 class Citation(BaseFinancialModel):
@@ -669,6 +706,13 @@ class AgentQuery(BaseFinancialModel):
     intent: QueryIntent = QueryIntent.GENERAL
     top_k: int = Field(default=5, ge=1)
     alpha: float = Field(default=0.5, ge=0.0, le=1.0)  # Weight for dense vs BM25
+    use_reranker: bool = True
+    reranker_strategy: RerankerStrategy | None = None
+    reranker_top_k: int | None = None
+    reranker_threshold: float | None = None
+    retrieval_strategy: RetrievalStrategy | None = None
+    use_semantic_cache: bool = True
+    similarity_threshold: float | None = None
 
     @field_validator("ticker_filter", mode="before")
     @classmethod
@@ -697,6 +741,10 @@ class AgentResponse(BaseFinancialModel):
     retrieved_chunks: list[ScoredChunk] = Field(default_factory=list)
     execution_time_ms: float = 0.0
     overall_confidence: float = 0.0
+    cache_hit: bool = False
+    cache_type: CacheHitType = CacheHitType.NONE
+    cache_similarity: float | None = None
+    rerank_explanations: list[RerankExplanation] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     def is_fully_grounded(self) -> bool:
@@ -713,10 +761,11 @@ class AgentResponse(BaseFinancialModel):
         """Return concise execution summary."""
         grounded_count = sum(1 for v in self.grounding_verdicts if v.is_supported)
         total_claims = len(self.grounding_verdicts)
+        cache_part = f" | Cache: {self.cache_type.value}" if self.cache_hit else ""
         return (
             f"Query: '{self.query}' | Chunks: {len(self.retrieved_chunks)} | "
             f"Citations: {len(self.citations)} | Grounded: {grounded_count}/{total_claims} | "
-            f"Conf: {self.overall_confidence:.2f} | Latency: {self.execution_time_ms:.1f}ms"
+            f"Conf: {self.overall_confidence:.2f} | Latency: {self.execution_time_ms:.1f}ms{cache_part}"
         )
 
     def to_json(self, indent: int | None = 2) -> str:
@@ -727,6 +776,109 @@ class AgentResponse(BaseFinancialModel):
     def from_json(cls, json_str: str) -> AgentResponse:
         """Instantiate response from JSON string."""
         return cls.model_validate_json(json_str)
+
+
+class RerankExplanation(BaseFinancialModel):
+    """Auditable attribution explaining why a chunk's rank changed during reranking."""
+
+    chunk_id: str
+    initial_rank: int
+    final_rank: int
+    initial_score: float
+    final_score: float
+    cross_encoder_score: float | None = None
+    heuristic_score: float | None = None
+    modality_bonus: float = 0.0
+    reasons: list[str] = Field(default_factory=list)
+
+
+class RerankerConfig(BaseFinancialModel):
+    """Configuration for cross-encoder and hybrid neural reranking."""
+
+    strategy: RerankerStrategy = RerankerStrategy.HYBRID
+    model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    top_k: int = Field(default=10, ge=1)
+    score_threshold: float = Field(default=0.0)
+    batch_size: int = Field(default=32, ge=1)
+    table_boost: float = Field(default=0.2, ge=0.0)
+    metric_boost: float = Field(default=0.25, ge=0.0)
+    figure_boost: float = Field(default=0.15, ge=0.0)
+    entity_boost: float = Field(default=0.2, ge=0.0)
+    cross_encoder_weight: float = Field(default=0.7, ge=0.0, le=1.0)
+    heuristic_weight: float = Field(default=0.3, ge=0.0, le=1.0)
+    device: str = "cpu"
+    normalize_scores: bool = True
+
+
+class HybridSearchConfig(BaseFinancialModel):
+    """Configuration for sparse BM25 and dense embedding hybrid retrieval."""
+
+    strategy: RetrievalStrategy = RetrievalStrategy.HYBRID_RRF
+    top_k: int = Field(default=10, ge=1)
+    alpha: float = Field(default=0.5, ge=0.0, le=1.0)
+    rrf_k: int = Field(default=60, ge=1)
+    rerank_top_k: int = Field(default=5, ge=1)
+    score_threshold: float = Field(default=0.0, ge=0.0)
+
+
+class SemanticCacheConfig(BaseFinancialModel):
+    """Configuration for semantic vector similarity caching."""
+
+    enabled: bool = True
+    similarity_threshold: float = Field(default=0.88, ge=0.0, le=1.0)
+    max_entries: int = Field(default=1000, ge=1)
+    ttl_seconds: float = Field(default=3600.0, ge=0.0)
+    eviction_policy: CacheEvictionPolicy = CacheEvictionPolicy.LRU
+    distance_metric: str = "cosine"
+
+
+class SemanticCacheEntry(BaseFinancialModel):
+    """Cached entry stored in semantic cache with query vector representation."""
+
+    key: str
+    query: str
+    query_vector: list[float] = Field(default_factory=list)
+    response: AgentResponse
+    similarity_score: float = 1.0
+    created_at: float = Field(default_factory=time.time)
+    last_accessed_at: float = Field(default_factory=time.time)
+    access_count: int = 1
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    def is_expired(self, ttl_seconds: float, current_time: float | None = None) -> bool:
+        """Check whether entry has exceeded ttl."""
+        now = time.time() if current_time is None else current_time
+        return (now - self.created_at) > ttl_seconds
+
+    def touch(self, current_time: float | None = None) -> None:
+        """Update last accessed timestamp and increment hit counter."""
+        self.last_accessed_at = time.time() if current_time is None else current_time
+        self.access_count += 1
+
+
+class SemanticCacheLookupResult(BaseFinancialModel):
+    """Outcome of a semantic cache lookup request."""
+
+    hit: bool
+    similarity: float = 0.0
+    matched_query: str | None = None
+    response: AgentResponse | None = None
+    lookup_latency_ms: float = 0.0
+    hit_type: CacheHitType = CacheHitType.NONE
+
+
+class SemanticCacheStats(BaseFinancialModel):
+    """Telemetry and operational metrics for semantic caching."""
+
+    total_queries: int = 0
+    exact_hits: int = 0
+    semantic_hits: int = 0
+    misses: int = 0
+    evictions: int = 0
+    entry_count: int = 0
+    max_entries: int = 1000
+    hit_rate: float = 0.0
+    avg_lookup_latency_ms: float = 0.0
 
 
 class RetrievalBenchmarkResult(BaseFinancialModel):

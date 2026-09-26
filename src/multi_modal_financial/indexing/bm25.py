@@ -53,16 +53,15 @@ class BM25Index:
                 # If token is a currency or percentage, also add raw number
                 if t_low.startswith("$"):
                     num_part = t_low.lstrip("$")
-                    if num_part:
-                        tokens.append(num_part)
-                        if "," in num_part:
-                            tokens.append(num_part.replace(",", ""))
                 elif t_low.endswith("%"):
                     num_part = t_low.rstrip("%")
-                    if num_part:
-                        tokens.append(num_part)
-                        if "," in num_part:
-                            tokens.append(num_part.replace(",", ""))
+                else:
+                    num_part = ""
+
+                if num_part:
+                    tokens.append(num_part)
+                    if "," in num_part:
+                        tokens.append(num_part.replace(",", ""))
 
         return tokens
 
@@ -90,6 +89,10 @@ class BM25Index:
         self.avgdl = (total_length / self.corpus_size) if self.corpus_size > 0 else 0.0
         self._compute_idf()
         return self
+
+    def add(self, chunk_id: str, text: str) -> None:
+        """Insert or index chunk tokens conforming to SparseIndexProtocol."""
+        self.add_documents([chunk_id], [text])
 
     def add_documents(self, doc_ids: list[str], documents: list[str]) -> BM25Index:
         """Incrementally add documents to existing index."""

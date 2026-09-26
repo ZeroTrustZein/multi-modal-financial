@@ -105,6 +105,11 @@ class DenseVectorIndex:
         self.dimension = self.vectors.shape[1] if self.vectors.ndim > 1 else self.dimension
         return self
 
+    def add(self, chunk_id: str, text: str, vector: list[float] | None = None) -> None:
+        """Insert or index chunk embedding conforming to DenseIndexProtocol."""
+        precomputed = np.asarray([vector], dtype=np.float32) if vector is not None else None
+        self.add_documents([chunk_id], [text], precomputed_vectors=precomputed)
+
     def add_documents(
         self,
         doc_ids: list[str],
@@ -134,7 +139,7 @@ class DenseVectorIndex:
 
     def search(
         self,
-        query: str,
+        query: str | list[float],
         top_k: int = 10,
         query_vector: np.ndarray | None = None,
     ) -> list[tuple[str, float]]:
@@ -142,7 +147,9 @@ class DenseVectorIndex:
         if self.vectors is None or len(self.doc_ids) == 0:
             return []
 
-        if query_vector is None:
+        if isinstance(query, (list, np.ndarray)):
+            q_emb = np.asarray(query, dtype=np.float32).flatten()
+        elif query_vector is None:
             q_emb = self.embed_fn([query])[0]
         else:
             q_emb = np.asarray(query_vector, dtype=np.float32).flatten()

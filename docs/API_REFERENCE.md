@@ -1,21 +1,23 @@
 # API Reference: Multi-Modal Financial RAG Pipeline
 
-Complete programmatic reference for all modules, classes, methods, models, and helper functions in **`multi_modal_financial`**.
+Complete programmatic reference for all modules, classes, methods, models, protocols, and helper functions in **`multi_modal_financial`**.
 
 ---
 
 ## Table of Contents
 1. [Pipeline Orchestrator (`multi_modal_financial.pipeline.orchestrator`)](#1-pipeline-orchestrator)
-2. [Domain Types & Models (`multi_modal_financial.types`)](#2-domain-types--models)
-3. [Agent & Routing (`multi_modal_financial.agent`)](#3-agent--routing)
-4. [Indexing Engine (`multi_modal_financial.indexing`)](#4-indexing-engine)
-5. [Retrieval & Fusion (`multi_modal_financial.retrieval`)](#5-retrieval--fusion)
-6. [Citation Grounding & Verification (`multi_modal_financial.grounding`)](#6-citation-grounding--verification)
-7. [Data Preprocessing & Validation (`multi_modal_financial.data`)](#7-data-preprocessing--validation)
-8. [Multi-Modal Parsing (`multi_modal_financial.parsing`)](#8-multi-modal-parsing)
-9. [Financial Analytics (`multi_modal_financial.analytics`)](#9-financial-analytics)
-10. [Storage & Caching (`multi_modal_financial.storage`)](#10-storage--caching)
-11. [CLI & Formatters (`multi_modal_financial.cli`)](#11-cli--formatters)
+2. [Runtime Protocols & Interfaces (`multi_modal_financial.interfaces`)](#2-runtime-protocols--interfaces)
+3. [Domain Types & Models (`multi_modal_financial.types`)](#3-domain-types--models)
+4. [Retrieval & Fusion Core (`multi_modal_financial.retrieval.fusion`)](#4-retrieval--fusion-core)
+5. [Neural Cross-Encoder & Reranker (`multi_modal_financial.retrieval.reranker`)](#5-neural-cross-encoder--reranker)
+6. [Storage, Multi-Tier Caching & Persistence (`multi_modal_financial.storage`)](#6-storage-multi-tier-caching--persistence)
+7. [Agent & Routing (`multi_modal_financial.agent`)](#7-agent--routing)
+8. [Indexing Engine (`multi_modal_financial.indexing`)](#8-indexing-engine)
+9. [Citation Grounding & Verification (`multi_modal_financial.grounding`)](#9-citation-grounding--verification)
+10. [Data Preprocessing & Validation (`multi_modal_financial.data`)](#10-data-preprocessing--validation)
+11. [Multi-Modal Parsing (`multi_modal_financial.parsing`)](#11-multi-modal-parsing)
+12. [Financial Analytics (`multi_modal_financial.analytics`)](#12-financial-analytics)
+13. [CLI & Formatters (`multi_modal_financial.cli`)](#13-cli--formatters)
 
 ---
 
@@ -25,12 +27,13 @@ Complete programmatic reference for all modules, classes, methods, models, and h
 ```python
 from multi_modal_financial.pipeline.orchestrator import OrchestratorConfig
 ```
-Configuration dataclass controlling caching, validation, retrieval defaults, and audit thresholds.
+Configuration dataclass controlling multi-tier caching, validation, retrieval strategies, neural reranking, and audit thresholds.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `enable_query_cache` | `bool` | `True` | Cache query responses using TTL and composite hashing. |
 | `enable_embedding_cache` | `bool` | `True` | Cache dense embedding vectors in LRU cache. |
+| `enable_semantic_cache` | `bool` | `True` | Cache queries and responses via dense vector similarity matching. |
 | `clean_text` | `bool` | `True` | Automatically run text cleaner on ingested documents. |
 | `validate_tables` | `bool` | `True` | Validate table structure and accounting balance during ingestion. |
 | `default_top_k` | `int` | `5` | Default number of chunks retrieved per query. |
@@ -41,6 +44,9 @@ Configuration dataclass controlling caching, validation, retrieval defaults, and
 | `confidence_threshold` | `float` | `0.60` | Minimum support score required for claims. |
 | `max_hallucination_rate` | `float` | `0.05` | Maximum permissible hallucination rate in compliance audits. |
 | `persistence_dir` | `Path \| None` | `None` | Optional default directory for index serialization. |
+| `semantic_cache_config` | `SemanticCacheConfig` | `SemanticCacheConfig()` | Configuration for semantic cache threshold, capacity, and eviction policy. |
+| `reranker_config` | `RerankerConfig` | `RerankerConfig()` | Configuration for second-stage cross-encoder and heuristic reranking. |
+| `hybrid_search_config` | `HybridSearchConfig` | `HybridSearchConfig()` | Configuration for multi-strategy retrieval and RRF smoothing parameters. |
 
 ---
 
@@ -48,19 +54,19 @@ Configuration dataclass controlling caching, validation, retrieval defaults, and
 ```python
 from multi_modal_financial.pipeline.orchestrator import FinancialPipelineOrchestrator
 ```
-Master pipeline controller integrating document loading, indexing, retrieval, verification, ratio calculations, variance analysis, and index persistence.
+Master pipeline controller integrating document loading, indexing, multi-strategy retrieval, neural reranking, verification, ratio calculations, variance analysis, and index persistence.
 
 #### `__init__(config: OrchestratorConfig | None = None, index: HybridIndex | None = None)`
-Initializes the orchestrator and all dependent subsystems.
+Initializes the orchestrator and all dependent subsystems including `SemanticCache`, `HybridRetriever`, `FinancialReranker`, `QueryRouter`, and `GroundingVerifier`.
 
 #### `ingest_files(paths: list[str | Path] | str | Path, default_ticker: str | None = None) -> list[Document]`
 Loads, cleans, validates, and indexes single files, lists of files, or entire directories. Supported formats: `.txt`, `.md`, `.json`, `.pdf`.
 
 #### `run_query(query: str | AgentQuery, top_k: int | None = None, alpha: float | None = None, use_cache: bool = True) -> AgentResponse`
-Executes an end-to-end financial query. Handles query routing, cache lookup, hybrid retrieval, reranking, synthesis, and sentence-level citation verification.
+Executes an end-to-end financial query. Evaluates exact-match and semantic cache, runs query routing, hybrid retrieval, cross-encoder reranking, context synthesis, and sentence-level citation verification.
 
 #### `run_batch_queries(queries: Sequence[str | AgentQuery], top_k: int | None = None) -> list[AgentResponse]`
-Executes a sequence of queries sequentially, leveraging the internal cache.
+Executes a sequence of queries sequentially, leveraging internal caching tiers.
 
 #### `audit_queries(queries: list[str]) -> GroundingAuditReport`
 Executes a suite of queries and compiles an institutional factual compliance audit report.
@@ -77,12 +83,98 @@ Serializes the current hybrid index to a directory or `.zip` archive.
 #### `load_index(source_path: str | Path) -> None`
 Loads a serialized index from disk and re-links the retrieval engine and caches.
 
+#### `checkpoint(compress: bool = False) -> Path`
+Persists the current index to the directory configured in `OrchestratorConfig.persistence_dir`.
+
+#### `save_semantic_cache(output_path: str | Path) -> Path | None`
+Serializes the semantic cache entries and vectors to disk.
+
+#### `load_semantic_cache(source_path: str | Path) -> None`
+Restores semantic cache entries from disk.
+
+#### `benchmark_retrieval(test_queries: Sequence[tuple[AgentQuery | str, list[str]]], k: int = 5, use_rrf: bool = True) -> RetrievalBenchmarkResult`
+Runs retrieval benchmark suite across labeled test query sets.
+
 #### `status() -> dict[str, Any]`
-Returns diagnostic status including total documents, chunks, vocabulary size, vector dimension, and cache statistics.
+Returns diagnostic status including total documents, chunks, vocabulary size, vector dimension, query cache stats, embedding cache stats, semantic cache telemetry, reranker config, and retriever configuration.
 
 ---
 
-## 2. Domain Types & Models
+## 2. Runtime Protocols & Interfaces
+
+Located in `multi_modal_financial.interfaces`. All protocols are decorated with `@runtime_checkable` conforming to PEP 544.
+
+### `CrossEncoderProtocol`
+```python
+@runtime_checkable
+class CrossEncoderProtocol(Protocol):
+    def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        """Compute cross-attention relevance scores for (query, document) pairs."""
+        ...
+```
+
+### `RerankerProtocol`
+```python
+@runtime_checkable
+class RerankerProtocol(Protocol):
+    def rerank(
+        self,
+        query: str | AgentQuery,
+        candidates: list[ScoredChunk],
+        top_k: int | None = None,
+    ) -> list[ScoredChunk]:
+        """Rerank candidates based on neural and/or domain financial salience."""
+        ...
+```
+
+### `SemanticCacheProtocol`
+```python
+@runtime_checkable
+class SemanticCacheProtocol(Protocol):
+    def get(
+        self,
+        query: str,
+        query_vector: list[float] | None = None,
+        similarity_threshold: float | None = None,
+    ) -> SemanticCacheLookupResult | None: ...
+    def put(
+        self,
+        query: str,
+        response: AgentResponse,
+        query_vector: list[float] | None = None,
+    ) -> None: ...
+    def clear(self) -> None: ...
+    def stats(self) -> SemanticCacheStats: ...
+```
+
+### `DenseIndexProtocol`
+```python
+@runtime_checkable
+class DenseIndexProtocol(Protocol):
+    def search(self, query: str | list[float], top_k: int = 10) -> list[tuple[str, float]]: ...
+    def add(self, chunk_id: str, text: str, vector: list[float] | None = None) -> None: ...
+```
+
+### `SparseIndexProtocol`
+```python
+@runtime_checkable
+class SparseIndexProtocol(Protocol):
+    def search(self, query: str, top_k: int = 10) -> list[tuple[str, float]]: ...
+    def add(self, chunk_id: str, text: str) -> None: ...
+```
+
+### `RetrieverProtocol`
+```python
+@runtime_checkable
+class RetrieverProtocol(Protocol):
+    def retrieve(
+        self, query: str | AgentQuery, top_k: int = 10, alpha: float = 0.5
+    ) -> list[ScoredChunk]: ...
+```
+
+---
+
+## 3. Domain Types & Models
 
 Located in `multi_modal_financial.types`.
 
@@ -94,6 +186,10 @@ Located in `multi_modal_financial.types`.
 - **`UnitScale`**: `ONES`, `THOUSANDS`, `MILLIONS`, `BILLIONS`, `TRILLIONS`, `PERCENT`, `RATIO`, `BPS`
 - **`QueryIntent`**: `METRIC_LOOKUP`, `COMPARATIVE_ANALYSIS`, `QUALITATIVE_RISK`, `TREND_CALCULATION`, `GENERAL`
 - **`GroundingStatus`**: `FULLY_SUPPORTED`, `PARTIALLY_SUPPORTED`, `UNSUPPORTED`, `CONTRADICTED`
+- **`RerankerStrategy`**: `CROSS_ENCODER`, `MODALITY_HEURISTIC`, `HYBRID`, `NONE`
+- **`RetrievalStrategy`**: `HYBRID_RRF`, `HYBRID_CONVEX`, `DENSE`, `SPARSE`
+- **`CacheEvictionPolicy`**: `LRU`, `LFU`, `FIFO`
+- **`CacheHitType`**: `EXACT`, `SEMANTIC`, `NONE`
 
 ---
 
@@ -168,12 +264,44 @@ Top-level multi-modal container.
 
 ---
 
-### `ScoredChunk`, `Citation`, `GroundingVerdict`, `AgentQuery`, `AgentResponse`
-- **`ScoredChunk`**: Pairs a `Chunk` with its final retrieval score and ranking breakdown.
-- **`Citation`**: Source attribution linking a claim to a specific chunk (`doc_id`, `page_number`, `modality`, `excerpt`, `score`).
+### `ScoredChunk`
+Pairs a `Chunk` with retrieval and reranking scores:
+- **Attributes**: `chunk: Chunk`, `score: float`, `dense_score: float = 0.0`, `sparse_score: float = 0.0`, `rank: int = 0`, `rerank_score: float | None = None`, `cross_encoder_score: float | None = None`, `semantic_score: float | None = None`, `modality_bonus: float = 0.0`, `explanation: str | None = None`.
+
+---
+
+### `RerankExplanation`
+Detailed explanation record for candidate reranking decisions:
+- **Attributes**: `chunk_id: str`, `initial_rank: int`, `final_rank: int`, `initial_score: float`, `final_score: float`, `cross_encoder_score: float | None = None`, `heuristic_score: float | None = None`, `modality_bonus: float = 0.0`, `reasons: list[str]`.
+
+---
+
+### `RerankerConfig`
+Configuration for second-stage reranking models:
+- **Attributes**: `strategy: RerankerStrategy = RerankerStrategy.HYBRID`, `model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"`, `device: str = "cpu"`, `batch_size: int = 32`, `top_k: int = 5`, `score_threshold: float = 0.0`, `cross_encoder_weight: float = 0.7`, `heuristic_weight: float = 0.3`, `normalize_scores: bool = True`, `table_boost: float = 0.2`, `metric_boost: float = 0.25`, `figure_boost: float = 0.15`, `entity_boost: float = 0.2`.
+
+---
+
+### `SemanticCacheConfig`, `SemanticCacheEntry`, `SemanticCacheLookupResult`, `SemanticCacheStats`
+Configuration, entries, lookup results, and operational telemetry for neural semantic cache:
+- **`SemanticCacheConfig`**: `enabled: bool = True`, `similarity_threshold: float = 0.85`, `max_entries: int = 1000`, `ttl_seconds: float = 86400.0`, `eviction_policy: CacheEvictionPolicy = CacheEvictionPolicy.LRU`, `distance_metric: str = "cosine"`.
+- **`SemanticCacheEntry`**: `key: str`, `query: str`, `query_vector: list[float]`, `response: AgentResponse`, `similarity_score: float = 1.0`, `created_at: float`, `last_accessed_at: float`, `access_count: int = 1`. Methods: `is_expired(ttl_seconds, current_time) -> bool`, `touch(current_time) -> None`.
+- **`SemanticCacheLookupResult`**: `hit: bool`, `similarity: float = 0.0`, `matched_query: str | None = None`, `response: AgentResponse | None = None`, `lookup_latency_ms: float = 0.0`, `hit_type: CacheHitType = CacheHitType.NONE`.
+- **`SemanticCacheStats`**: `total_queries: int`, `exact_hits: int`, `semantic_hits: int`, `misses: int`, `evictions: int`, `entry_count: int`, `max_entries: int`, `hit_rate: float`, `avg_lookup_latency_ms: float`. Method: `to_dict() -> dict[str, Any]`.
+
+---
+
+### `HybridSearchConfig`
+Configuration model for hybrid retrieval fusion strategies:
+- **Attributes**: `strategy: RetrievalStrategy = RetrievalStrategy.HYBRID_RRF`, `default_alpha: float = 0.5`, `top_k: int = 10`, `rrf_k: int = 60`, `normalization: str = "min_max"`, `score_threshold: float = 0.0`, `allowed_chunk_ids: set[str] | None = None`.
+
+---
+
+### `Citation`, `GroundingVerdict`, `AgentQuery`, `AgentResponse`
+- **`Citation`**: Source attribution linking a claim to a specific chunk (`citation_id`, `doc_id`, `page_number`, `modality`, `excerpt`, `score`, `claim_text`).
 - **`GroundingVerdict`**: Result of sentence-level fact check (`status`, `confidence`, `verified_numbers`, `hallucinated_numbers`, `explanation`).
-- **`AgentQuery`**: Query parameters (`query_str`, `ticker_filter`, `period_filter`, `year_filter`, `top_k`, `alpha`).
-- **`AgentResponse`**: Structured RAG output (`query`, `answer`, `citations`, `retrieved_chunks`, `verdict`, `groundedness_score`, `execution_time_ms`).
+- **`AgentQuery`**: Query parameters (`query_str`, `ticker_filter`, `period_filter`, `year_filter`, `doc_type_filter`, `modal_filter`, `top_k`, `alpha`, `retrieval_strategy`, `reranker_strategy`, `use_reranker`, `reranker_top_k`, `reranker_threshold`, `use_semantic_cache`, `enable_rerank_explanation`).
+- **`AgentResponse`**: Structured RAG output (`query`, `answer`, `citations`, `retrieved_chunks`, `verdict`, `groundedness_score`, `execution_time_ms`, `overall_confidence`, `cache_hit`, `cache_type`, `cache_similarity`, `rerank_explanations`).
 
 ---
 

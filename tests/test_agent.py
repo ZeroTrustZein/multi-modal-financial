@@ -9,9 +9,11 @@ import pytest
 
 from multi_modal_financial.agent.pipeline import FinancialRAGPipeline
 from multi_modal_financial.agent.router import QueryRouter
+from multi_modal_financial.pipeline.orchestrator import FinancialPipelineOrchestrator
 from multi_modal_financial.types import (
     AgentQuery,
     AgentResponse,
+    CacheHitType,
     ModalType,
     QueryIntent,
 )
@@ -106,3 +108,63 @@ class TestFinancialRAGPipeline:
             assert len(ingested) == 2
             assert pipeline.index.total_documents() == 2
             assert pipeline.index.total_chunks() == 2
+
+    def test_query_rerank_explanations(self, rag_pipeline: FinancialRAGPipeline) -> None:
+        response = rag_pipeline.query("Operating income margin for AAPL in 2025", use_reranker=True)
+        assert len(response.rerank_explanations) > 0
+        exp = response.rerank_explanations[0]
+        assert exp.final_rank == 1
+        assert len(exp.reasons) > 0
+
+    def test_orchestrator_semantic_cache_integration(
+        self, rag_pipeline: FinancialRAGPipeline
+    ) -> None:
+        orch = FinancialPipelineOrchestrator(index=rag_pipeline.index)
+
+        # First query: cold lookup, cache miss
+        q1 = AgentQuery(query_str="What was operating income for AAPL in 2025?", top_k=2)
+        resp1 = orch.run_query(q1, use_cache=True)
+        assert resp1.cache_hit is False
+
+        # Disable query_cache to verify pure semantic cache lookup
+        orch.query_cache = None
+
+        # Second query: semantically similar phrasing with customized threshold
+        q2 = AgentQuery(query_str="operating income 2025 AAPL", top_k=2, similarity_threshold=0.75)
+        resp2 = orch.run_query(q2, use_cache=True)
+        assert resp2.cache_hit is True
+        assert resp2.cache_type in (CacheHitType.EXACT, CacheHitType.SEMANTIC)
+        assert resp2.cache_similarity is not None
+        assert resp2.cache_similarity >= 0.70
+
+        # Verify operational telemetry in status
+        st = orch.status()
+        assert st["semantic_cache"] is not None
+        assert st["semantic_cache"]["total_queries"] >= 1
+
+    def test_auto_grounding_and_verdict_confidence_fallback(
+        self, rag_pipeline: FinancialRAGPipeline, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Mock synthesis to return an answer without bracket citations
+        monkeypatch.setattr(
+            rag_pipeline,
+            "_synthesize_answer",
+            lambda q, chunks: "Net sales were $391,035 million according to recent filings.",
+        )
+        # Mock verifier to return empty verdicts list
+        monkeypatch.setattr(rag_pipeline.verifier, "verify_response", lambda ans, chunks: [])
+
+        resp = rag_pipeline.query("Total sales for 2025")
+        assert len(resp.retrieved_chunks) > 0
+        assert len(resp.citations) > 0
+        assert resp.overall_confidence == 0.5
+
+    def test_query_with_custom_reranker_top_k(self, rag_pipeline: FinancialRAGPipeline) -> None:
+        q = AgentQuery(
+            query_str="Net sales in fiscal 2025",
+            top_k=5,
+            reranker_top_k=1,
+            use_reranker=True,
+        )
+        resp = rag_pipeline.query(q)
+        assert len(resp.retrieved_chunks) == 1

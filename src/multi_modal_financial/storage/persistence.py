@@ -13,7 +13,13 @@ from pathlib import Path
 import numpy as np
 
 from multi_modal_financial.indexing.hybrid import HybridIndex
-from multi_modal_financial.types import Chunk, Document
+from multi_modal_financial.storage.cache import SemanticCache
+from multi_modal_financial.types import (
+    Chunk,
+    Document,
+    SemanticCacheConfig,
+    SemanticCacheEntry,
+)
 
 
 @dataclass
@@ -28,13 +34,28 @@ class IndexManifest:
     bm25_params: dict[str, float] = field(default_factory=lambda: {"k1": 1.5, "b": 0.75})
     tickers: list[str] = field(default_factory=list)
     checksum: str = ""
+    reranker_strategy: str | None = None
+    semantic_cache_entries: int = 0
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict) -> IndexManifest:
-        return cls(**data)
+        valid_keys = {
+            "version",
+            "created_at",
+            "total_documents",
+            "total_chunks",
+            "vector_dimension",
+            "bm25_params",
+            "tickers",
+            "checksum",
+            "reranker_strategy",
+            "semantic_cache_entries",
+        }
+        filtered = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered)
 
 
 class IndexPersistence:
@@ -249,3 +270,37 @@ class IndexPersistence:
         # Re-index
         hybrid._rebuild_indices()
         return hybrid
+
+    @classmethod
+    def save_semantic_cache(cls, cache: SemanticCache, output_path: str | Path) -> Path:
+        """Save semantic cache entries to disk as JSON."""
+        target = Path(output_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        entries_data = [entry.model_dump() for entry in cache._entries.values()]
+        payload = {
+            "version": "0.1.0",
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "total_entries": len(entries_data),
+            "entries": entries_data,
+        }
+        target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return target
+
+    @classmethod
+    def load_semantic_cache(
+        cls,
+        source_path: str | Path,
+        config: SemanticCacheConfig | None = None,
+    ) -> SemanticCache:
+        """Restore semantic cache from JSON file."""
+        source = Path(source_path)
+        if not source.exists():
+            raise FileNotFoundError(f"Persisted cache not found: {source}")
+        payload = json.loads(source.read_text(encoding="utf-8"))
+        cache = SemanticCache(config=config)
+        for e_dict in payload.get("entries", []):
+            entry = SemanticCacheEntry.model_validate(e_dict)
+            cache._entries[entry.key] = entry
+            norm_q = cache._normalize_query(entry.query)
+            cache._exact_index[norm_q] = entry.key
+        return cache

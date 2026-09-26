@@ -5,20 +5,30 @@ from __future__ import annotations
 import pytest
 
 from multi_modal_financial.indexing.hybrid import HybridIndex
+from multi_modal_financial.interfaces import (
+    CrossEncoderProtocol,
+    RerankerProtocol,
+    RetrieverProtocol,
+)
 from multi_modal_financial.retrieval.fusion import (
     HybridRetriever,
     min_max_normalize,
     reciprocal_rank_fusion,
     z_score_normalize,
 )
-from multi_modal_financial.retrieval.reranker import FinancialReranker
+from multi_modal_financial.retrieval.reranker import FinancialCrossEncoder, FinancialReranker
 from multi_modal_financial.types import (
     AgentQuery,
     Chunk,
     Document,
     DocumentMetadata,
+    HybridSearchConfig,
     ModalType,
     QueryIntent,
+    RerankerConfig,
+    RerankerStrategy,
+    RetrievalStrategy,
+    ScoredChunk,
     TableData,
 )
 
@@ -145,3 +155,220 @@ class TestFinancialReranker:
         assert reranked[0].chunk.chunk_id == "chk_tbl"
         assert reranked[0].rank == 1
         assert reranked[0].modality_bonus > 0.0
+
+
+class TestFinancialCrossEncoder:
+    """Unit tests for FinancialCrossEncoder implementation."""
+
+    def test_protocol_conformance(self) -> None:
+        encoder = FinancialCrossEncoder()
+        assert isinstance(encoder, CrossEncoderProtocol)
+
+    def test_predict_scoring(self) -> None:
+        encoder = FinancialCrossEncoder()
+        pairs = [
+            (
+                "operating revenue for 2025",
+                "Operating revenue reached $150,000 million in fiscal year 2025.",
+            ),
+            ("operating revenue for 2025", "The weather was sunny in Seattle yesterday afternoon."),
+        ]
+        scores = encoder.predict(pairs)
+        assert len(scores) == 2
+        assert all(0.0 <= s <= 1.0 for s in scores)
+        # Relevant financial pair should score higher than unrelated passage
+        assert scores[0] > scores[1]
+
+    def test_predict_empty_pairs(self) -> None:
+        encoder = FinancialCrossEncoder()
+        assert encoder.predict([]) == []
+
+    def test_predict_empty_and_punctuation_pairs(self) -> None:
+        encoder = FinancialCrossEncoder()
+        pairs = [
+            ("", "Some financial content"),
+            ("Valid query", ""),
+            ("??? !!!", "$$$ @@@"),
+        ]
+        scores = encoder.predict(pairs)
+        assert len(scores) == 3
+        assert scores[0] == 0.0
+        assert scores[1] == 0.0
+        assert scores[2] == 0.0
+
+    def test_predict_numerical_congruence(self) -> None:
+        encoder = FinancialCrossEncoder()
+        pairs = [
+            ("Revenue in 2025 was $391,035", "Revenue was reported at $391,035 in 2025."),
+            ("Revenue in 2025 was $391,035", "Revenue was reported at $120,000 in 2021."),
+        ]
+        scores = encoder.predict(pairs)
+        assert scores[0] > scores[1]
+
+
+class TestFinancialRerankerExtended:
+    """Unit tests for neural cross-encoder and hybrid reranker strategies."""
+
+    @pytest.fixture
+    def candidates(self) -> list[ScoredChunk]:
+        c1 = Chunk(
+            chunk_id="c_text",
+            doc_id="doc1",
+            modal_type=ModalType.TEXT,
+            content="Overview of competitive dynamics in the cloud industry.",
+        )
+        c2 = Chunk(
+            chunk_id="c_metric",
+            doc_id="doc1",
+            modal_type=ModalType.METRIC,
+            content="Net sales totaled $391,035 million for fiscal 2025.",
+        )
+        c3 = Chunk(
+            chunk_id="c_table",
+            doc_id="doc1",
+            modal_type=ModalType.TABLE,
+            content="Consolidated Operations: Net Sales $391,035M, Cost of sales $210,352M.",
+        )
+        return [
+            ScoredChunk(chunk=c1, score=0.4, rank=1),
+            ScoredChunk(chunk=c2, score=0.5, rank=2),
+            ScoredChunk(chunk=c3, score=0.6, rank=3),
+        ]
+
+    def test_protocol_conformance(self) -> None:
+        reranker = FinancialReranker()
+        assert isinstance(reranker, RerankerProtocol)
+
+    def test_cross_encoder_strategy(self, candidates: list[ScoredChunk]) -> None:
+        config = RerankerConfig(strategy=RerankerStrategy.CROSS_ENCODER, top_k=2)
+        reranker = FinancialReranker(config=config)
+        results = reranker.rerank("Net sales in fiscal 2025", candidates)
+
+        assert len(results) == 2
+        assert results[0].cross_encoder_score is not None
+        assert results[0].rank == 1
+        assert len(reranker.last_explanations) == 2
+        exp = reranker.last_explanations[0]
+        assert exp.final_rank == 1
+        assert exp.cross_encoder_score is not None
+
+    def test_hybrid_strategy_with_explanations(self, candidates: list[ScoredChunk]) -> None:
+        config = RerankerConfig(
+            strategy=RerankerStrategy.HYBRID,
+            cross_encoder_weight=0.6,
+            heuristic_weight=0.4,
+            top_k=3,
+        )
+        reranker = FinancialReranker(config=config)
+        query = AgentQuery(query_str="Net sales in 2025 table", top_k=3)
+        results = reranker.rerank(query, candidates)
+
+        assert len(results) == 3
+        # Table or metric with exact number & year match should be top
+        assert results[0].chunk.chunk_id in ("c_table", "c_metric")
+        assert results[0].explanation is not None
+        assert "Hybrid:" in results[0].explanation
+        assert len(reranker.last_explanations) == 3
+        assert reranker.last_explanations[0].heuristic_score is not None
+        assert reranker.last_explanations[0].cross_encoder_score is not None
+
+    def test_score_threshold_filtering(self, candidates: list[ScoredChunk]) -> None:
+        config = RerankerConfig(
+            strategy=RerankerStrategy.HEURISTIC,
+            score_threshold=1.5,  # Very high threshold to filter out low-score items
+        )
+        reranker = FinancialReranker(config=config)
+        results = reranker.rerank("totally unrelated query", candidates)
+        # Should only return items meeting threshold or empty
+        for item in results:
+            assert item.score >= 1.5
+
+    def test_empty_candidates_handling(self) -> None:
+        reranker = FinancialReranker()
+        assert reranker.rerank("Query", []) == []
+        assert reranker.last_explanations == []
+
+    def test_figure_modality_boost_keywords(self) -> None:
+        c_fig = Chunk(
+            chunk_id="c_fig",
+            doc_id="doc1",
+            modal_type=ModalType.FIGURE,
+            content="Revenue trajectory from 2020 to 2025 shown as a bar chart.",
+        )
+        candidates = [ScoredChunk(chunk=c_fig, score=0.5, rank=1)]
+        reranker = FinancialReranker()
+        res = reranker.rerank("Show revenue trend chart", candidates)
+        assert len(res) == 1
+        assert any("Figure modality boost" in r for r in reranker.last_explanations[0].reasons)
+
+
+class TestHybridRetrieverStrategies:
+    """Unit tests for HybridRetriever with different RetrievalStrategy modes."""
+
+    @pytest.fixture
+    def setup_retriever(self) -> HybridRetriever:
+        index = HybridIndex(dimension=32)
+        meta = DocumentMetadata(doc_id="doc_aapl", filename="aapl.txt", ticker="AAPL", year=2025)
+        c1 = Chunk(
+            chunk_id="chunk_1",
+            doc_id="doc_aapl",
+            modal_type=ModalType.TEXT,
+            content="Total net sales reached $391,035 million in fiscal year 2025.",
+        )
+        c2 = Chunk(
+            chunk_id="chunk_2",
+            doc_id="doc_aapl",
+            modal_type=ModalType.TEXT,
+            content="Operating expenses were $55,000 million for research and development.",
+        )
+        doc = Document(doc_id="doc_aapl", metadata=meta, chunks=[c1, c2])
+        index.index_document(doc)
+        return HybridRetriever(index)
+
+    def test_retriever_protocol_conformance(self, setup_retriever: HybridRetriever) -> None:
+        assert isinstance(setup_retriever, RetrieverProtocol)
+
+    def test_dense_only_strategy(self, setup_retriever: HybridRetriever) -> None:
+        config = HybridSearchConfig(strategy=RetrievalStrategy.DENSE, top_k=2)
+        setup_retriever.config = config
+        hits = setup_retriever.retrieve("net sales 2025", strategy=RetrievalStrategy.DENSE)
+        assert len(hits) > 0
+        assert hits[0].dense_score != 0.0
+
+    def test_sparse_only_strategy(self, setup_retriever: HybridRetriever) -> None:
+        hits = setup_retriever.retrieve(
+            "research and development", strategy=RetrievalStrategy.SPARSE
+        )
+        assert len(hits) > 0
+        assert hits[0].sparse_score > 0.0
+        assert hits[0].chunk.chunk_id == "chunk_2"
+
+    def test_convex_blend_strategy(self, setup_retriever: HybridRetriever) -> None:
+        hits = setup_retriever.retrieve(
+            "net sales", strategy=RetrievalStrategy.HYBRID_CONVEX, alpha=0.8
+        )
+        assert len(hits) > 0
+        assert hits[0].rank == 1
+
+    def test_string_query_input(self, setup_retriever: HybridRetriever) -> None:
+        hits = setup_retriever.retrieve("Total net sales", top_k=1)
+        assert len(hits) == 1
+        assert hits[0].chunk.chunk_id == "chunk_1"
+
+    def test_score_threshold_filtering(self, setup_retriever: HybridRetriever) -> None:
+        cfg = HybridSearchConfig(strategy=RetrievalStrategy.DENSE, score_threshold=0.99)
+        setup_retriever.config = cfg
+        hits = setup_retriever.retrieve("unrelated random text")
+        for h in hits:
+            assert h.score >= 0.99
+
+    def test_allowed_ids_filtering(self, setup_retriever: HybridRetriever) -> None:
+        q = AgentQuery(query_str="net sales", modal_filter=ModalType.TABLE)
+        hits = setup_retriever.retrieve(q, strategy=RetrievalStrategy.SPARSE)
+        assert hits == []
+
+    def test_default_config_strategy(self, setup_retriever: HybridRetriever) -> None:
+        setup_retriever.config = HybridSearchConfig(strategy=RetrievalStrategy.SPARSE)
+        hits = setup_retriever.retrieve(AgentQuery(query_str="operating expenses"), use_rrf=None)
+        assert len(hits) > 0
+        assert hits[0].chunk.chunk_id == "chunk_2"
