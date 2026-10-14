@@ -305,7 +305,131 @@ Configuration model for hybrid retrieval fusion strategies:
 
 ---
 
-## 3. Agent & Routing
+## 4. Retrieval & Fusion Core
+
+Located in `multi_modal_financial.retrieval.fusion`.
+
+### `HybridRetriever`
+Combines BM25 and dense vector search results into unified ranked candidate chunks conforming to `RetrieverProtocol`.
+
+#### `__init__(index: HybridIndex, rrf_k: int = 60, config: HybridSearchConfig | None = None)`
+Initializes retriever with underlying index and configuration.
+
+#### `retrieve(query: str | AgentQuery, top_k: int = 10, alpha: float = 0.5, use_rrf: bool | None = None, strategy: RetrievalStrategy | str | None = None) -> list[ScoredChunk]`
+Executes candidate retrieval using the effective strategy:
+- `RetrievalStrategy.HYBRID_RRF`: Weighted Reciprocal Rank Fusion ($k=60$).
+- `RetrievalStrategy.HYBRID_CONVEX`: Normalized convex score blending ($\alpha \cdot \text{Dense} + (1-\alpha) \cdot \text{BM25}$).
+- `RetrievalStrategy.DENSE`: Pure dense semantic vector cosine similarity.
+- `RetrievalStrategy.SPARSE`: Pure Okapi BM25 lexical search.
+
+#### `benchmark(test_queries: Sequence[tuple[AgentQuery, list[str]]], k: int = 5, use_rrf: bool = True) -> RetrievalBenchmarkResult`
+Runs retrieval evaluation benchmark over labeled test queries, computing Recall@1, Recall@K, and Mean Reciprocal Rank (MRR).
+
+---
+
+### Standalone Fusion Functions
+- **`reciprocal_rank_fusion(*ranked_lists: list[tuple[str, float]], k: int = 60, weights: list[float] | None = None) -> list[tuple[str, float]]`**:
+  Merges arbitrary ranked lists using RRF scoring.
+- **`min_max_normalize(scores: list[float]) -> list[float]`**:
+  Normalizes scores to $[0, 1]$ interval.
+- **`z_score_normalize(scores: list[float]) -> list[float]`**:
+  Standardizes scores to zero-mean unit-variance distribution.
+
+---
+
+## 5. Neural Cross-Encoder & Reranker
+
+Located in `multi_modal_financial.retrieval.reranker`.
+
+### `FinancialCrossEncoder`
+Neural cross-encoder scoring model conforming to `CrossEncoderProtocol`. Simulates cross-token attention over pairwise $(Q, D)$ inputs with specialized financial vocabulary weighting and numerical fact verification.
+
+#### `__init__(model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2", device: str = "cpu", batch_size: int = 32)`
+Initializes cross-encoder with target model architecture and inference parameters.
+
+#### `predict(pairs: list[tuple[str, str]]) -> list[float]`
+Computes joint cross-attention relevance scores $\in [0, 1]$ for pairs of `(query, document_text)`.
+
+#### `FINANCIAL_CONCEPT_WEIGHTS: dict[str, float]`
+Domain dictionary attributing elevated importance to core financial keywords (`revenue: 1.5`, `eps: 1.5`, `ebitda: 1.5`, `margin: 1.4`, `operating: 1.3`, `debt: 1.2`).
+
+---
+
+### `FinancialReranker`
+Second-stage candidate reranker conforming to `RerankerProtocol`. Re-ranks initial candidates using neural cross-attention, domain heuristics, and modality bonuses.
+
+#### `__init__(config: RerankerConfig | None = None, cross_encoder: FinancialCrossEncoder | None = None, table_boost: float | None = None, metric_boost: float | None = None, figure_boost: float | None = None, entity_boost: float | None = None)`
+Initializes reranker with configuration and cross-encoder instance.
+
+#### `rerank(query: str | AgentQuery, candidates: list[ScoredChunk], top_k: int | None = None) -> list[ScoredChunk]`
+Re-scores and re-orders candidate chunks based on configured strategy (`CROSS_ENCODER`, `HYBRID`, `MODALITY_HEURISTIC`, `NONE`), applies modality/temporal bonuses, filters candidates below `score_threshold`, and truncates to `top_k`.
+
+#### `last_explanations: list[RerankExplanation]`
+Retains the structured explanation records generated during the most recent `rerank()` call.
+
+---
+
+## 6. Storage, Multi-Tier Caching & Persistence
+
+Located in `multi_modal_financial.storage.cache` and `multi_modal_financial.storage.persistence`.
+
+### `SemanticCache`
+High-performance neural semantic cache conforming to `SemanticCacheProtocol`.
+
+#### `__init__(config: SemanticCacheConfig | None = None, embed_fn: Callable[[list[str]], np.ndarray] | None = None)`
+Initializes cache with capacity limits, TTL expiration, distance metric, and eviction policy.
+
+#### `get(query: str, query_vector: list[float] | None = None, similarity_threshold: float | None = None) -> SemanticCacheLookupResult | None`
+Executes exact match fast-path lookup ($O(1)$) followed by vector similarity scan. Returns `SemanticCacheLookupResult` indicating hit status, similarity score, latency, and hit type (`EXACT`, `SEMANTIC`, `NONE`).
+
+#### `put(query: str, response: AgentResponse, query_vector: list[float] | None = None) -> None`
+Stores query, embedding vector, and deep-copied response. Purges expired entries and enforces maximum capacity via configured eviction policy (`LRU`, `LFU`, `FIFO`).
+
+#### `clear() -> None`
+Flushes all entries, resets exact-match hash table, and clears operational telemetry counters.
+
+#### `stats() -> SemanticCacheStats`
+Returns operational telemetry including total lookups, exact hits, semantic hits, misses, evictions, active occupancy, hit rate, and average latency.
+
+---
+
+### `EmbeddingCache`
+Thread-safe LRU cache for dense embedding vectors.
+- **`get(text: str) -> np.ndarray | None`**
+- **`put(text: str, vector: np.ndarray) -> None`**
+- **`get_or_compute(texts: list[str], compute_fn: Callable[[list[str]], np.ndarray]) -> np.ndarray`**: Batch lookup with fallback projection.
+- **`clear() -> None`**
+- **`stats() -> dict[str, Any]`**
+
+---
+
+### `QueryCache`
+In-memory LRU cache storing full `AgentResponse` objects with TTL expiration.
+- **`get(key: str) -> AgentResponse | None`**
+- **`put(key: str, response: AgentResponse) -> None`**
+- **`make_key(query_str: str, ticker: str | None = None, period: str | None = None, year: int | None = None, top_k: int = 5, alpha: float = 0.5) -> str`**
+- **`clear() -> None`**
+- **`stats() -> dict[str, Any]`**
+
+---
+
+### `IndexPersistence`
+Serializes and restores `HybridIndex` and `SemanticCache` state to/from disk directories and compressed `.zip` archives.
+- **`save(index: HybridIndex, output_path: str | Path, compress: bool = False) -> Path`**
+- **`load(source_path: str | Path) -> HybridIndex`**
+- **`save_semantic_cache(cache: SemanticCache, output_path: str | Path) -> Path`**
+- **`load_semantic_cache(source_path: str | Path, config: SemanticCacheConfig | None = None) -> SemanticCache`**
+- **`export_corpus(documents: list[Document], target_json: str | Path) -> Path`**
+- **`import_corpus(source_json: str | Path) -> list[Document]`**
+
+---
+
+### `IndexManifest`
+Metadata schema tracking serialized index versioning, chunk counts, vocabulary, SHA-256 checksums, and cache configurations.
+
+---
+
+## 7. Agent & Routing
 
 ### `QueryRouter` (`multi_modal_financial.agent.router`)
 Analyzes query strings to classify intent and extract target metadata.
@@ -320,14 +444,16 @@ Analyzes query strings to classify intent and extract target metadata.
 Standard RAG execution pipeline.
 - **`ingest_text(text: str, doc_id: str, ticker: str | None = None, period: str | None = None, year: int | None = None) -> Document`**: Ingests raw text or Markdown string.
 - **`ingest_file(file_path: str | Path, ticker: str | None = None) -> Document`**: Ingests document file.
+- **`ingest_directory(dir_path: str | Path, default_ticker: str | None = None) -> list[Document]`**: Batch directory ingestion.
 - **`query(query_input: str | AgentQuery, top_k: int = 5, use_reranker: bool = True) -> AgentResponse`**: Executes retrieval, reranking, synthesis, and verification.
 
 ---
 
-## 4. Indexing Engine
+## 8. Indexing Engine
 
 ### `BM25Index` (`multi_modal_financial.indexing.bm25`)
-Okapi BM25 sparse lexical search engine.
+Okapi BM25 sparse lexical search engine conforming to `SparseIndexProtocol`.
+- **`add(chunk_id: str, text: str) -> None`**
 - **`add_document(doc_id: str, text: str, metadata: dict | None = None) -> None`**
 - **`add_documents(docs: Sequence[tuple[str, str, dict]]) -> None`**
 - **`search(query: str, top_k: int = 10) -> list[tuple[str, float]]`**: Returns list of `(doc_id, score)`.
@@ -336,10 +462,11 @@ Okapi BM25 sparse lexical search engine.
 ---
 
 ### `DenseVectorIndex` (`multi_modal_financial.indexing.vector`)
-Deterministic dense vector index using orthographic hash projections.
+Deterministic dense vector index using orthographic hash projections conforming to `DenseIndexProtocol`.
+- **`add(chunk_id: str, text: str, vector: list[float] | None = None) -> None`**
 - **`add_vector(doc_id: str, text: str, metadata: dict | None = None) -> None`**
 - **`add_precomputed(doc_id: str, vector: np.ndarray, metadata: dict | None = None) -> None`**
-- **`search(query: str | np.ndarray, top_k: int = 10) -> list[tuple[str, float]]`**
+- **`search(query: str | np.ndarray | list[float], top_k: int = 10) -> list[tuple[str, float]]`**
 - **`embed(text: str) -> np.ndarray`**: Generates normalized vector embedding.
 
 ---
@@ -350,36 +477,19 @@ Unified container encapsulating both `BM25Index` and `DenseVectorIndex`.
 - **`index_chunk(chunk: Chunk) -> None`**: Indexes individual chunk.
 - **`get_chunk(chunk_id: str) -> Chunk | None`**
 - **`get_document(doc_id: str) -> Document | None`**
-- **`filter_chunks(ticker: str | None = None, period: str | None = None, year: int | None = None, modality: ModalType | None = None) -> set[str]`**: Returns matching chunk IDs.
+- **`filter_chunk_ids(ticker: str | None = None, period: str | None = None, year: int | None = None, modal_type: ModalType | None = None, doc_type: DocumentType | None = None) -> list[str]`**: Returns matching chunk IDs.
+- **`total_documents() -> int`**
+- **`total_chunks() -> int`**
 
 ---
 
-## 5. Retrieval & Fusion
-
-### `HybridRetriever` (`multi_modal_financial.retrieval.fusion`)
-Executes dual-mode retrieval over `HybridIndex`.
-- **`retrieve(agent_query: AgentQuery, use_rrf: bool = True) -> list[ScoredChunk]`**: Primary retrieval method using either RRF or convex score blend.
-- **`retrieve_rrf(query_str: str, top_k: int = 5, k_rrf: int = 60, allowed_ids: set[str] | None = None) -> list[ScoredChunk]`**: Reciprocal rank fusion.
-- **`retrieve_convex(query_str: str, top_k: int = 5, alpha: float = 0.5, allowed_ids: set[str] | None = None) -> list[ScoredChunk]`**: Linear score blending.
-
-#### Standalone Fusion Functions
-- **`reciprocal_rank_fusion(bm25_ranks: list[str], dense_ranks: list[str], k: int = 60, weights: tuple[float, float] = (1.0, 1.0)) -> list[tuple[str, float]]`**
-- **`min_max_normalize(scores: dict[str, float]) -> dict[str, float]`**
-- **`z_score_normalize(scores: dict[str, float]) -> dict[str, float]`**
-
----
-
-### `FinancialReranker` (`multi_modal_financial.retrieval.reranker`)
-- **`rerank(query: str, scored_chunks: list[ScoredChunk], query_ticker: str | None = None) -> list[ScoredChunk]`**: Re-weights candidate chunks by modality (tables/metrics boosted), ticker/period exact match, and token alignment.
-
----
-
-## 6. Citation Grounding & Verification
+## 9. Citation Grounding & Verification
 
 ### `CitationGrounder` (`multi_modal_financial.grounding.citation`)
 - **`extract_citations(text: str) -> list[int]`**: Parses bracket citations (`[1]`, `[2]`).
 - **`extract_claims(text: str) -> list[str]`**: Slices answer into individual factual assertions.
 - **`create_provenance_record(chunk: Chunk, query_id: str | None = None) -> ProvenanceRecord`**: Generates verifiable audit provenance record.
+- **`auto_ground_claim(claim: str, chunks: list[Chunk]) -> Citation | None`**: Dynamically maps assertion to source chunk.
 
 ---
 
@@ -396,7 +506,7 @@ Executes dual-mode retrieval over `HybridIndex`.
 
 ---
 
-## 7. Data Preprocessing & Validation
+## 10. Data Preprocessing & Validation
 
 ### `FinancialDataCleaner` (`multi_modal_financial.data.cleaner`)
 - **`normalize_dashes(text: str) -> str`**
@@ -433,7 +543,7 @@ Generates realistic financial statements and filings for testing.
 
 ---
 
-## 8. Multi-Modal Parsing
+## 11. Multi-Modal Parsing
 
 ### `FinancialDocumentParser` (`multi_modal_financial.parsing.extractor`)
 - **`parse_text(text: str, doc_id: str, ticker: str | None = None, period: str | None = None, year: int | None = None) -> Document`**
@@ -454,7 +564,7 @@ Generates realistic financial statements and filings for testing.
 
 ---
 
-## 9. Financial Analytics
+## 12. Financial Analytics
 
 ### `FinancialRatioCalculator` (`multi_modal_financial.analytics.ratios`)
 - **`compute_margins(revenue: float, gross_profit: float | None = None, operating_income: float | None = None, net_income: float | None = None) -> dict[str, float]`**
@@ -473,42 +583,35 @@ Generates realistic financial statements and filings for testing.
 
 ---
 
-## 10. Storage & Caching
-
-### `IndexPersistence` (`multi_modal_financial.storage.persistence`)
-- **`save(index: HybridIndex, target_path: str | Path, compress: bool = False) -> Path`**
-- **`load(source_path: str | Path) -> HybridIndex`**
-- **`export_corpus(documents: list[Document], target_json: str | Path) -> Path`**
-- **`import_corpus(source_json: str | Path) -> list[Document]`**
-
----
-
-### `EmbeddingCache` & `QueryCache` (`multi_modal_financial.storage.cache`)
-- **`EmbeddingCache(max_size: int = 5000)`**: LRU vector cache.
-  - `get(text: str) -> np.ndarray | None`
-  - `put(text: str, vector: np.ndarray) -> None`
-  - `get_or_compute(text: str, compute_fn: Callable[[str], np.ndarray]) -> np.ndarray`
-  - `stats() -> dict[str, Any]`
-- **`QueryCache(max_size: int = 256, ttl_seconds: float = 3600.0)`**: TTL + LRU query response cache.
-  - `get(key: str) -> AgentResponse | None`
-  - `put(key: str, response: AgentResponse) -> None`
-  - `make_key(...) -> str`
-  - `stats() -> dict[str, Any]`
-  - `clear() -> None`
-
----
-
-## 11. CLI & Formatters
+## 13. CLI & Formatters
 
 Located in `multi_modal_financial.cli`.
 
-- **Commands**:
-  - `multi-modal-financial info`: Prints system architecture and environment status.
-  - `multi-modal-financial ingest <file_or_dir> [--ticker <TICKER>]`: Ingests filings into the pipeline.
-  - `multi-modal-financial query "<prompt>" [--ticker <TICKER>] [--top-k <K>] [--alpha <ALPHA>]`: Runs hybrid RAG query with formatted citations.
-  - `multi-modal-financial benchmark`: Runs baseline BM25 vs Hybrid RRF retrieval benchmarks.
-- **Formatters** (`multi_modal_financial.cli.formatters`):
-  - `format_architecture_table() -> Table`
-  - `format_response_panel(answer: str, latency_ms: float) -> Panel`
-  - `format_citations_table(citations: list[Citation]) -> Table`
-  - `format_benchmark_table(bm25_r1, bm25_mrr, hybrid_r1, hybrid_mrr) -> Table`
+### CLI Commands (`multi_modal_financial.cli.main`)
+- **`multi-modal-financial info [--status]`**:
+  Prints system architecture details and optional live subsystem telemetry.
+- **`multi-modal-financial ingest <file_or_dir> [--ticker <TICKER>] [--clean/--no-clean] [--validate/--no-validate]`**:
+  Ingests filings into the pipeline index.
+- **`multi-modal-financial query "<prompt>" [options]`**:
+  Runs hybrid RAG query with formatted citations. Options: `--ticker`, `--top-k`, `--alpha`, `--strategy`, `--reranker-strategy`, `--rerank/--no-rerank`, `--reranker-top-k`, `--reranker-threshold`, `--semantic-cache/--no-semantic-cache`, `--explain`, `--period`, `--year`.
+- **`multi-modal-financial cache-stats`**:
+  Displays operational telemetry table for semantic and query caches.
+- **`multi-modal-financial ratios <file_path>`**:
+  Parses filing, extracts GAAP tables, and displays profitability, liquidity, and solvency ratios.
+- **`multi-modal-financial compare <base_file> <compare_file>`**:
+  Calculates horizontal YoY/QoQ variances across matching metrics between two filings.
+- **`multi-modal-financial audit [queries...] [--max-hallucination-rate <RATE>]`**:
+  Executes batch verification compliance audit across test queries and outputs verification pass/fail status.
+- **`multi-modal-financial benchmark [--top-k <K>]`**:
+  Evaluates retrieval accuracy across BM25, Dense, and Hybrid modes.
+
+### Terminal Formatters (`multi_modal_financial.cli.formatters`)
+- **`format_architecture_table() -> Table`**
+- **`format_response_panel(answer: str, execution_time_ms: float, cache_hit: bool = False, cache_type: Any = None, confidence: float = 1.0, reranker_strategy: str | None = None, retrieval_strategy: str | None = None) -> Panel`**
+- **`format_citations_table(citations: list[Citation]) -> Table`**
+- **`format_benchmark_table(bm25_r1: float, bm25_mrr: float, hybrid_r1: float, hybrid_mrr: float, dense_r1: float = 0.0, dense_mrr: float = 0.0) -> Table`**
+- **`format_cache_stats_table(stats_dict: dict[str, Any]) -> Table`**
+- **`format_ratios_table(summary: RatioSummary, doc_id: str | None = None) -> Table`**
+- **`format_comparison_table(variances: list[VarianceResult], base_id: str | None = None, comp_id: str | None = None) -> Table`**
+- **`format_audit_table(report: GroundingAuditReport) -> Table`**
+- **`format_rerank_explanations_table(explanations: list[RerankExplanation]) -> Table`**

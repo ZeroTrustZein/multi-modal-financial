@@ -1,6 +1,6 @@
 # Multi-Modal Financial Document RAG Pipeline
 
-[![CI](https://github.com/zein/multi-modal-financial/actions/workflows/ci.yml/badge.svg)](https://github.com/zein/multi-modal-financial/actions)
+[![CI](https://github.com/ZeroTrustZein/multi-modal-financial/actions/workflows/ci.yml/badge.svg)](https://github.com/ZeroTrustZein/multi-modal-financial/actions)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
@@ -106,7 +106,7 @@ Financial Filings (SEC 10-K, 10-Q, 8-K, Earnings Releases, PDFs)
 
 ### Standard Installation
 ```bash
-git clone https://github.com/zein/multi-modal-financial.git
+git clone https://github.com/ZeroTrustZein/multi-modal-financial.git
 cd multi-modal-financial
 pip install -e .
 ```
@@ -188,14 +188,14 @@ for c in response.citations:
 
 if response.rerank_explanations:
     for exp in response.rerank_explanations:
-        print(f"Chunk: {exp.chunk_id} | Final: {exp.final_score:.4f} | Factors: {', '.join(exp.reasons)}")
+        print(
+            f"Chunk: {exp.chunk_id} | Final: {exp.final_score:.4f} | Factors: {', '.join(exp.reasons)}"
+        )
 
 # 5. Check factual grounding verdict
 if response.verdict:
     print("Verification Status:", response.verdict.status.value)
     print("Verified Numbers:", response.verdict.verified_numbers)
-    print("Hallucinated Numbers:", response.verdict.hallucinated_numbers)
-```
     print("Hallucinated Numbers:", response.verdict.hallucinated_numbers)
 ```
 
@@ -370,18 +370,6 @@ For advanced technical details, consult the dedicated documentation files:
 ## Verification & Testing
 
 The project maintains 100% test pass rate across 294 test cases, comprehensive Mypy strict typing, and Ruff linting:
-
-```bash
-# Run test suite with coverage
-python -m pytest --cov=multi_modal_financial --cov-report=term-missing
-
-# Run Ruff linter and formatter check
-python -m ruff check .
-python -m ruff format --check .
-
-# Run static type checker
-python -m mypy src
-```
 
 ```bash
 # Run test suite with coverage

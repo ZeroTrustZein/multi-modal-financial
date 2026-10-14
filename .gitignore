@@ -50,3 +50,4 @@ coverage.xml
 *.pdf
 logs/
 .dev.log
+.claude/

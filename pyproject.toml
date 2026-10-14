@@ -9,7 +9,7 @@ description = "Multi-modal financial document RAG agent pipeline with hybrid BM2
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "Portfolio Automation" }]
+authors = [{ name = "ZeroTrustZein" }]
 dependencies = [
     "numpy>=1.24.0",
     "scipy>=1.10.0",
