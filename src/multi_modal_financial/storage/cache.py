@@ -174,6 +174,7 @@ class SemanticCache:
         self._embed_fn = embed_fn or self._dense_index.embed_fn
         self._entries: dict[str, SemanticCacheEntry] = {}
         self._exact_index: dict[str, str] = {}  # normalized_query -> key
+        self._access_seq = 0
 
         # Telemetry counters
         self._total_queries = 0
@@ -259,7 +260,9 @@ class SemanticCache:
             if entry.is_expired(self.config.ttl_seconds, current_time=now):
                 self._delete_entry(exact_key)
             else:
+                self._access_seq += 1
                 entry.touch(current_time=now)
+                entry.metadata["access_seq"] = self._access_seq
                 self._exact_hits += 1
                 latency = (time.perf_counter() - t0) * 1000.0
                 self._total_latency_ms += latency
@@ -307,7 +310,9 @@ class SemanticCache:
         )
 
         if best_entry is not None and best_sim >= threshold:
+            self._access_seq += 1
             best_entry.touch(current_time=now)
+            best_entry.metadata["access_seq"] = self._access_seq
             self._semantic_hits += 1
             return SemanticCacheLookupResult(
                 hit=True,
@@ -359,23 +364,35 @@ class SemanticCache:
                 evict_key: str | None = None
                 if self.config.eviction_policy == CacheEvictionPolicy.LRU:
                     evict_key = min(
-                        self._entries.keys(), key=lambda k: self._entries[k].last_accessed_at
+                        self._entries.keys(),
+                        key=lambda k: (
+                            self._entries[k].metadata.get("access_seq", 0),
+                            self._entries[k].last_accessed_at,
+                        ),
                     )
                 elif self.config.eviction_policy == CacheEvictionPolicy.LFU:
                     evict_key = min(
                         self._entries.keys(),
                         key=lambda k: (
                             self._entries[k].access_count,
+                            self._entries[k].metadata.get("access_seq", 0),
                             self._entries[k].last_accessed_at,
                         ),
                     )
                 elif self.config.eviction_policy == CacheEvictionPolicy.FIFO:
-                    evict_key = min(self._entries.keys(), key=lambda k: self._entries[k].created_at)
+                    evict_key = min(
+                        self._entries.keys(),
+                        key=lambda k: (
+                            self._entries[k].metadata.get("create_seq", 0),
+                            self._entries[k].created_at,
+                        ),
+                    )
 
                 if evict_key is not None:
                     self._delete_entry(evict_key)
                     self._evictions += 1
 
+        self._access_seq += 1
         new_entry = SemanticCacheEntry(
             key=key,
             query=query,
@@ -385,6 +402,7 @@ class SemanticCache:
             created_at=now,
             last_accessed_at=now,
             access_count=1,
+            metadata={"access_seq": self._access_seq, "create_seq": self._access_seq},
         )
         self._entries[key] = new_entry
         self._exact_index[norm_q] = key
@@ -393,6 +411,7 @@ class SemanticCache:
         """Flush all cache entries and reset telemetry."""
         self._entries.clear()
         self._exact_index.clear()
+        self._access_seq = 0
         self._total_queries = 0
         self._exact_hits = 0
         self._semantic_hits = 0
