@@ -382,5 +382,32 @@ def audit(queries: tuple[str, ...], max_hallucination_rate: float):
     console.print(format_audit_table(report))
 
 
+@cli.command("mcp-serve")
+def mcp_serve():
+    """Start the Model Context Protocol (MCP) stdio server."""
+    from multi_modal_financial.mcp.server import FinancialMcpServer
+
+    server = FinancialMcpServer()
+    server.run_stdio_server()
+
+
+@cli.command("edgar-fetch")
+@click.argument("ticker")
+@click.option("--period", default="Q3", help="Fiscal period (e.g. Q1, Q2, Q3, FY)")
+@click.option("--year", default=2025, type=int, help="Fiscal year")
+def edgar_fetch(ticker: str, period: str, year: int):
+    """Fetch real SEC EDGAR disclosures and ingest into pipeline."""
+    from multi_modal_financial.data.edgar import SecEdgarClient
+
+    client = SecEdgarClient()
+    orchestrator = FinancialPipelineOrchestrator()
+    doc = client.convert_facts_to_document(ticker, year=year, period=period)
+    orchestrator.index.index_document(doc)
+    console.print(
+        f"[bold green]Successfully fetched & indexed SEC filing for {ticker.upper()} "
+        f"({year} {period}) with {len(doc.chunks)} chunks and {len(doc.get_tables())} tables.[/bold green]"
+    )
+
+
 if __name__ == "__main__":
     cli()

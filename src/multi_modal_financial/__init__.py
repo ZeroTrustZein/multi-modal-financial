@@ -6,6 +6,7 @@ from multi_modal_financial.agent.pipeline import FinancialRAGPipeline
 from multi_modal_financial.analytics.comparator import PeriodComparator, VarianceResult
 from multi_modal_financial.analytics.ratios import FinancialRatioCalculator, RatioSummary
 from multi_modal_financial.data.cleaner import FinancialDataCleaner
+from multi_modal_financial.data.edgar import SecEdgarClient
 from multi_modal_financial.data.loader import BatchDocumentLoader
 from multi_modal_financial.data.synthetic import SyntheticFilingGenerator
 from multi_modal_financial.data.validator import (
@@ -16,6 +17,7 @@ from multi_modal_financial.data.validator import (
     ValidationReport,
 )
 from multi_modal_financial.grounding.audit import GroundingAuditor, GroundingAuditReport
+from multi_modal_financial.indexing.graph import EntityEdge, EntityNode, FinancialKnowledgeGraph
 from multi_modal_financial.indexing.hybrid import HybridIndex
 from multi_modal_financial.interfaces import (
     CrossEncoderProtocol,
@@ -25,6 +27,8 @@ from multi_modal_financial.interfaces import (
     SemanticCacheProtocol,
     SparseIndexProtocol,
 )
+from multi_modal_financial.mcp.server import FinancialMcpServer
+from multi_modal_financial.parsing.hierarchy import SectionHierarchyParser
 from multi_modal_financial.pipeline.orchestrator import (
     FinancialPipelineOrchestrator,
     OrchestratorConfig,
@@ -138,4 +142,10 @@ __all__ = [
     "GroundingAuditReport",
     "FinancialPipelineOrchestrator",
     "OrchestratorConfig",
+    "SecEdgarClient",
+    "SectionHierarchyParser",
+    "FinancialKnowledgeGraph",
+    "EntityNode",
+    "EntityEdge",
+    "FinancialMcpServer",
 ]

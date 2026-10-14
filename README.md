@@ -43,8 +43,20 @@ It combines Okapi BM25 lexical sparse search with dense semantic vector embeddin
   - **Embedding & Query Caches**: Thread-safe Least-Recently-Used (LRU) vector embedding cache and Time-To-Live (TTL) query response cache.
   - **Atomic Checkpoint Persistence**: Directory and compressed `.zip` index serialization with JSON manifests and SHA-256 integrity validation.
 
+- **Live SEC EDGAR Client & Ingestion**:
+  - Automated CIK lookup, rate limiting (10 req/s), and SEC User-Agent compliance.
+  - Pulls official 10-K, 10-Q disclosures and structured XBRL company facts directly into multi-modal documents.
+
+- **Financial Knowledge Graph & Entity Lineage**:
+  - Directed in-memory graph linking tickers, subsidiaries, reporting periods, statements, metrics, and risk factors.
+  - Multi-hop traversal and Graphviz DOT export for lineage explainability and multi-period relationship tracing.
+
+- **Model Context Protocol (MCP) Server**:
+  - Native stdio-based MCP server exposing financial RAG capabilities (`query_financial_filings`, `compute_financial_ratios`, `compare_filing_periods`, `audit_factual_grounding`).
+  - Ready for integration with AI coding agents (Claude Desktop, OpenCode, Hermes).
+
 - **Developer CLI & Rich Terminal Dashboard**:
-  - Command-line interface powered by Click and Rich for inspection, batch ingestion, interactive queries with reranking explanations, retrieval benchmarks, cache telemetry (`cache-stats`), statement ratios (`ratios`), horizontal variance comparison (`compare`), and compliance audits (`audit`).
+  - Command-line interface powered by Click and Rich for inspection, batch ingestion, interactive queries with reranking explanations, retrieval benchmarks, cache telemetry (`cache-stats`), statement ratios (`ratios`), horizontal variance comparison (`compare`), compliance audits (`audit`), live SEC fetching (`edgar-fetch`), and stdio MCP server execution (`mcp-serve`).
 
 ---
 
@@ -299,6 +311,21 @@ Running Retrieval Benchmark...
 └─────────────────────┴───────────┴────────┘
 ```
 
+### Fetch Real SEC EDGAR Filings
+```bash
+# Ingest live SEC 10-Q filing for Apple
+multi-modal-financial edgar-fetch AAPL --period Q3 --year 2025
+
+# Ingest live SEC 10-Q filing for NVIDIA
+multi-modal-financial edgar-fetch NVDA --period Q2 --year 2025
+```
+
+### Launch Model Context Protocol (MCP) Server
+```bash
+# Run stdio MCP server for Claude Desktop / OpenCode / Hermes
+multi-modal-financial mcp-serve
+```
+
 ---
 
 ## Project Structure
@@ -369,7 +396,7 @@ For advanced technical details, consult the dedicated documentation files:
 
 ## Verification & Testing
 
-The project maintains 100% test pass rate across 294 test cases, comprehensive Mypy strict typing, and Ruff linting:
+The project maintains 100% test pass rate across 313 test cases, comprehensive Mypy strict typing, and Ruff linting:
 
 ```bash
 # Run test suite with coverage
