@@ -18,6 +18,10 @@ Complete programmatic reference for all modules, classes, methods, models, proto
 11. [Multi-Modal Parsing (`multi_modal_financial.parsing`)](#11-multi-modal-parsing)
 12. [Financial Analytics (`multi_modal_financial.analytics`)](#12-financial-analytics)
 13. [CLI & Formatters (`multi_modal_financial.cli`)](#13-cli--formatters)
+14. [SEC EDGAR Ingestion (`multi_modal_financial.data.edgar`)](#14-sec-edgar-ingestion)
+15. [Financial Knowledge Graph (`multi_modal_financial.indexing.graph`)](#15-financial-knowledge-graph)
+16. [Section Hierarchy Parser (`multi_modal_financial.parsing.hierarchy`)](#16-section-hierarchy-parser)
+17. [Model Context Protocol Server (`multi_modal_financial.mcp.server`)](#17-model-context-protocol-server)
 
 ---
 
@@ -604,6 +608,10 @@ Located in `multi_modal_financial.cli`.
   Executes batch verification compliance audit across test queries and outputs verification pass/fail status.
 - **`multi-modal-financial benchmark [--top-k <K>]`**:
   Evaluates retrieval accuracy across BM25, Dense, and Hybrid modes.
+- **`multi-modal-financial mcp-serve`**:
+  Starts stdio-based Model Context Protocol (MCP) server for integration with LLM agents.
+- **`multi-modal-financial edgar-fetch <ticker> [--period <Q1-Q4|FY>] [--year <YYYY>]`**:
+  Fetches company facts and disclosures from SEC EDGAR API and indexes them directly.
 
 ### Terminal Formatters (`multi_modal_financial.cli.formatters`)
 - **`format_architecture_table() -> Table`**
@@ -615,3 +623,113 @@ Located in `multi_modal_financial.cli`.
 - **`format_comparison_table(variances: list[VarianceResult], base_id: str | None = None, comp_id: str | None = None) -> Table`**
 - **`format_audit_table(report: GroundingAuditReport) -> Table`**
 - **`format_rerank_explanations_table(explanations: list[RerankExplanation]) -> Table`**
+
+---
+
+## 14. SEC EDGAR Ingestion
+
+Located in `multi_modal_financial.data.edgar`.
+
+### `SecEdgarClient`
+```python
+from multi_modal_financial.data.edgar import SecEdgarClient
+```
+Client for retrieving financial disclosures and XBRL company facts from the SEC EDGAR API with rate limiting and deterministic fallback generation.
+
+- **`__init__(user_agent: str = ..., request_timeout_seconds: float = 10.0, rate_limit_delay: float = 0.15)`**:
+  Initializes client with custom SEC User-Agent header and throttle delay (SEC 10 req/s policy).
+- **`get_cik(ticker: str) -> str`**:
+  Resolves ticker symbol to a 10-digit zero-padded CIK string.
+- **`fetch_company_facts(ticker: str) -> dict[str, Any]`**:
+  Queries `https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json`. Falls back to offline deterministic fact generation if SEC endpoint is unreachable.
+- **`convert_facts_to_document(ticker: str, year: int = 2025, period: str = "Q3") -> Document`**:
+  Transforms XBRL entity disclosures into a structured multi-modal `Document` containing narrative text chunks and balance sheet / income statement `TableData` structures.
+
+---
+
+## 15. Financial Knowledge Graph
+
+Located in `multi_modal_financial.indexing.graph`.
+
+### `EntityNode`
+```python
+from multi_modal_financial.indexing.graph import EntityNode
+```
+Represents an entity or financial concept in the knowledge graph.
+- `id: str`
+- `node_type: str` (`COMPANY`, `TICKER`, `PERIOD`, `STATEMENT`, `METRIC`, `SEGMENT`, `RISK_FACTOR`)
+- `label: str`
+- `properties: dict[str, Any]`
+
+### `EntityEdge`
+```python
+from multi_modal_financial.indexing.graph import EntityEdge
+```
+Represents a directed relationship between financial entities.
+- `source: str`
+- `target: str`
+- `relation: str` (`HAS_METRIC`, `REPORTED_IN`, `SEGMENT_OF`, `EXPOSED_TO_RISK`, `VARIED_FROM`)
+- `weight: float`
+- `properties: dict[str, Any]`
+
+### `FinancialKnowledgeGraph`
+```python
+from multi_modal_financial.indexing.graph import FinancialKnowledgeGraph
+```
+In-memory directed multi-relational graph engine for multi-period financial lineage and multi-hop reasoning.
+
+- **`add_node(node_id: str, node_type: str, label: str, **properties: Any) -> EntityNode`**
+- **`add_edge(source_id: str, target_id: str, relation: str, weight: float = 1.0, **properties: Any) -> EntityEdge`**
+- **`get_neighbors(node_id: str, direction: str = "out", relation: str | None = None) -> list[tuple[EntityEdge, EntityNode]]`**
+- **`query_multi_hop(start_node_id: str, max_depth: int = 2, target_node_type: str | None = None) -> list[tuple[list[str], list[str]]]`**:
+  Executes multi-hop breadth-first traversal returning paths as tuples of node ID lists and relation lists.
+- **`build_from_document(document: Document) -> None`**:
+  Extracts entities and relationships from parsed document chunks, tables, and financial metrics.
+- **`to_dict() -> dict[str, Any]` / `from_dict(data: dict[str, Any]) -> FinancialKnowledgeGraph`**:
+  JSON-compatible serialization and deserialization.
+- **`to_dot() -> str`**:
+  Exports graph in Graphviz DOT format for visual graph rendering.
+
+---
+
+## 16. Section Hierarchy Parser
+
+Located in `multi_modal_financial.parsing.hierarchy`.
+
+### `SectionHierarchyParser`
+```python
+from multi_modal_financial.parsing.hierarchy import SectionHierarchyParser
+```
+Detects standard SEC filing sections (e.g. Item 1: Business, Item 1A: Risk Factors, Item 7: MD&A, Item 8: Financial Statements) and generates section-attributed chunks.
+
+- **`__init__(max_chunk_tokens: int = 500, chunk_overlap_tokens: int = 50)`**
+- **`detect_sections(text: str) -> list[tuple[int, str]]`**:
+  Finds character start offsets and normalized labels for standard SEC Items.
+- **`assign_sections_to_text(text: str) -> list[tuple[str, str]]`**:
+  Splits document text into contiguous `(section_label, section_content)` tuples.
+- **`split_into_hierarchical_chunks(doc_id: str, text: str, base_page: int = 1, metadata: dict[str, Any] | None = None) -> list[Chunk]`**:
+  Produces atomic chunks with attached section metadata (`chunk.metadata["section"]`) and hierarchical flags for section-scoped retrieval.
+
+---
+
+## 17. Model Context Protocol Server
+
+Located in `multi_modal_financial.mcp.server`.
+
+### `FinancialMcpServer`
+```python
+from multi_modal_financial.mcp.server import FinancialMcpServer
+```
+Implements stdio-based JSON-RPC Model Context Protocol (MCP) server for integration with AI assistants and tool-calling agents.
+
+- **`__init__(orchestrator: FinancialPipelineOrchestrator | None = None)`**
+- **`execute_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]`**:
+  Dispatches tool calls across:
+  - `query_financial_filings`: Hybrid RAG queries with citations and reranking.
+  - `compute_financial_ratios`: Extracts statement tables and computes margin/liquidity/solvency ratios.
+  - `compare_filing_periods`: Computes horizontal YoY/QoQ variances.
+  - `audit_factual_grounding`: Evaluates factual support for assertions against indexed documents.
+- **`handle_request(message: dict[str, Any]) -> dict[str, Any] | None`**:
+  Processes MCP wire protocol JSON-RPC messages (`initialize`, `tools/list`, `tools/call`).
+- **`run_stdio_server() -> None`**:
+  Runs non-blocking stdin/stdout event loop.
