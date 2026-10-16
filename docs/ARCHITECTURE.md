@@ -605,3 +605,36 @@ from multi_modal_financial.interfaces import (
 - **Pluggable Neural Backends**: Enterprise deployments can substitute local mock cross-encoders with GPU-accelerated Hugging Face transformers, ONNX Runtime engines, or remote inference endpoints without modifying pipeline code.
 - **Modular Storage Tiers**: The semantic cache and indexing engines can be backed by Redis, Faiss, Qdrant, or Pinecone by implementing the respective protocol methods.
 - **Isolated Testing & Mocking**: Unit tests verify interfaces without requiring neural model checkpoints or external databases.
+
+---
+
+## 11. Extended Ingestion, Knowledge Graph & MCP Subsystems
+
+### 11.1 SEC EDGAR Ingestion & XBRL Entity Facts
+The `SecEdgarClient` (`multi_modal_financial.data.edgar`) integrates live regulatory disclosures:
+- **CIK Resolution**: Resolves equity tickers (`AAPL`, `MSFT`, `NVDA`, `ACM`) to zero-padded 10-digit Central Index Keys (CIK).
+- **SEC Policy Compliance**: Adheres to the SEC EDGAR Fair Access policy with rate-limiting ($10\text{ req/sec}$, defaulting to a conservative 0.15s delay) and declarative User-Agent formats (`Sample Company Name AdminContact@<sample company domain>.com`).
+- **XBRL Facts Mapping**: Ingests JSON company facts from `https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json`, transforming balance sheet and income statement concepts (`Assets`, `Liabilities`, `StockholdersEquity`, `Revenues`, `NetIncomeLoss`) into multi-modal `Document` and `TableData` structures.
+- **Deterministic Offline Fallback**: Generates consistent synthetic GAAP statement structures when network access is unavailable, maintaining test repeatability.
+
+### 11.2 Financial Knowledge Graph & Lineage Engine
+The `FinancialKnowledgeGraph` (`multi_modal_financial.indexing.graph`) maintains an in-memory multi-relational graph:
+- **Node Taxonomy**: `COMPANY`, `TICKER`, `PERIOD`, `STATEMENT`, `METRIC`, `SEGMENT`, `RISK_FACTOR`.
+- **Edge Taxonomy**: `HAS_METRIC`, `REPORTED_IN`, `SEGMENT_OF`, `EXPOSED_TO_RISK`, `VARIED_FROM`.
+- **Multi-Hop Traversal**: Breadth-first search (`query_multi_hop(start_node, max_depth, target_node_type)`) explores paths to answer multi-period questions (e.g., tracing revenue variance across consecutive fiscal quarters or identifying common risk exposures).
+- **Graphviz DOT Visualization**: Exports relational graphs via `to_dot()` for rendering structural lineage and dependency diagrams.
+
+### 11.3 Hierarchical Section Segmentation
+The `SectionHierarchyParser` (`multi_modal_financial.parsing.hierarchy`) segments SEC filings by standardized Item taxonomy:
+- **SEC Item Catalog**: Matches regex patterns for Item 1 (Business), Item 1A (Risk Factors), Item 1B (Unresolved Staff Comments), Item 2 (Properties), Item 3 (Legal Proceedings), Item 7 (MD&A), Item 7A (Quantitative & Qualitative Market Risk), Item 8 (Financial Statements), Item 9 (Disagreements).
+- **Section Attribution**: Partitions filing text into `(section_label, section_content)` tuples and attaches `chunk.metadata["section"]` to atomic chunks, enabling section-scoped retrieval filters.
+
+### 11.4 Model Context Protocol (MCP) Server Architecture
+The `FinancialMcpServer` (`multi_modal_financial.mcp.server`) implements the Anthropic Model Context Protocol specification:
+- **Transport**: Standard I/O (`stdio`) JSON-RPC 2.0 communication.
+- **Exposed Tools**:
+  1. `query_financial_filings`: Hybrid RAG execution with citation grounding and reranking.
+  2. `compute_financial_ratios`: Extraction of statement metrics and calculation of profitability, liquidity, and solvency ratios.
+  3. `compare_filing_periods`: Automated YoY/QoQ horizontal variance calculation.
+  4. `audit_factual_grounding`: Factual verification and hallucination auditing on user assertions.
+- **Agent Integration**: Exposes tools for Claude Desktop, OpenCode, and external AI agents via `multi-modal-financial mcp-serve`.

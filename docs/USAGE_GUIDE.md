@@ -15,6 +15,10 @@ This guide provides real-world recipes and walkthroughs for integrating, configu
 8. [Recipe 8: Financial Ratios and Horizontal Period Comparison](#recipe-8-financial-ratios-and-horizontal-period-comparison)
 9. [Recipe 9: Index & Semantic Cache Checkpoint Persistence](#recipe-9-index--semantic-cache-checkpoint-persistence)
 10. [Recipe 10: Advanced CLI Automation & Telemetry Dashboards](#recipe-10-advanced-cli-automation--telemetry-dashboards)
+11. [Recipe 11: Ingesting Live SEC EDGAR Filings & XBRL Facts](#recipe-11-ingesting-live-sec-edgar-filings--xbrl-facts)
+12. [Recipe 12: Entity Lineage & Multi-Hop Knowledge Graph Traversal](#recipe-12-entity-lineage--multi-hop-knowledge-graph-traversal)
+13. [Recipe 13: Hierarchical SEC Section Segmentation](#recipe-13-hierarchical-sec-section-segmentation)
+14. [Recipe 14: Running and Connecting the Model Context Protocol (MCP) Server](#recipe-14-running-and-connecting-the-model-context-protocol-mcp-server)
 
 ---
 
@@ -505,4 +509,134 @@ Running Retrieval Benchmark...
 │ Dense (Vector Only) │ 100.0%    │ 1.000  │
 │ Hybrid (Dense+BM25) │ 100.0%    │ 1.000  │
 └─────────────────────┴───────────┴────────┘
+```
+
+---
+
+## Recipe 11: Ingesting Live SEC EDGAR Filings & XBRL Facts
+
+Use `SecEdgarClient` to resolve ticker symbols to official CIK numbers, download XBRL company facts, and index disclosures into the multi-modal pipeline:
+
+```python
+from multi_modal_financial.data.edgar import SecEdgarClient
+from multi_modal_financial.pipeline.orchestrator import FinancialPipelineOrchestrator
+
+orchestrator = FinancialPipelineOrchestrator()
+client = SecEdgarClient(
+    user_agent="QuantFundResearch/1.0 (compliance@quantfund.com)",
+    rate_limit_delay=0.15,
+)
+
+# Fetch disclosures for Microsoft (MSFT)
+msft_doc = client.convert_facts_to_document("MSFT", year=2025, period="Q3")
+orchestrator.index.index_document(msft_doc)
+
+# Query ingested SEC filing
+response = orchestrator.run_query("What was total revenue and net income for MSFT?")
+print(response.answer)
+```
+
+CLI shortcut:
+```bash
+multi-modal-financial edgar-fetch AAPL --period Q3 --year 2025
+```
+
+---
+
+## Recipe 12: Entity Lineage & Multi-Hop Knowledge Graph Traversal
+
+Construct an in-memory knowledge graph from filings to link companies, subsidiaries, reporting periods, and financial statements:
+
+```python
+from multi_modal_financial.data.synthetic import SyntheticFilingGenerator
+from multi_modal_financial.indexing.graph import FinancialKnowledgeGraph
+
+generator = SyntheticFilingGenerator(seed=42)
+doc = generator.generate_filing_document(ticker="AAPL", year=2025, period="Q3")
+
+graph = FinancialKnowledgeGraph()
+graph.build_from_document(doc)
+
+# Multi-hop query: trace all statements and metrics reported by AAPL
+paths = graph.query_multi_hop(start_node_id="comp_AAPL", max_depth=2)
+for node_path, rel_path in paths:
+    print(" -> ".join(f"{rel}:{node}" for rel, node in zip(["START"] + rel_path, node_path)))
+
+# Export Graphviz DOT for visualization
+dot_source = graph.to_dot()
+with open("financial_graph.dot", "w") as f:
+    f.write(dot_source)
+```
+
+---
+
+## Recipe 13: Hierarchical SEC Section Segmentation
+
+Partition long 10-K filings into distinct SEC Items (Item 1: Business, Item 1A: Risk Factors, Item 7: MD&A) with section attribution on chunks:
+
+```python
+from multi_modal_financial.parsing.hierarchy import SectionHierarchyParser
+
+parser = SectionHierarchyParser(max_chunk_tokens=400, chunk_overlap_tokens=40)
+
+filing_text = """
+ITEM 1. BUSINESS
+ACME Corp is a global supplier of aerospace propulsion systems...
+
+ITEM 1A. RISK FACTORS
+Supply chain disruptions could materially adversely affect operating results...
+
+ITEM 7. MANAGEMENT'S DISCUSSION AND ANALYSIS OF FINANCIAL CONDITION
+Net sales increased 14% to $850 million driven by commercial demand...
+"""
+
+chunks = parser.split_into_hierarchical_chunks(doc_id="acme_10k_2025", text=filing_text)
+for chunk in chunks:
+    print(f"Chunk ID: {chunk.chunk_id} | Section: {chunk.metadata.get('section')}")
+```
+
+---
+
+## Recipe 14: Running and Connecting the Model Context Protocol (MCP) Server
+
+Expose `multi-modal-financial` as an MCP server over stdio for Claude Desktop, OpenCode, or AI agent swarms:
+
+### Start the Server via CLI
+```bash
+multi-modal-financial mcp-serve
+```
+
+### Claude Desktop / OpenCode Configuration (`mcpServers`)
+Add the server entry to `claude_desktop_config.json` or `opencode.json`:
+
+```json
+{
+  "mcpServers": {
+    "multi-modal-financial": {
+      "command": "python",
+      "args": ["-m", "multi_modal_financial.mcp"],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}
+```
+
+### Programmatic MCP Execution
+```python
+from multi_modal_financial.mcp.server import FinancialMcpServer
+
+server = FinancialMcpServer()
+
+# Query financial filings tool
+result = server.execute_tool(
+    "query_financial_filings",
+    {"query": "What was Apple's gross margin?", "ticker": "AAPL", "top_k": 3},
+)
+print(result)
+
+# Compute ratios tool
+ratios = server.execute_tool("compute_financial_ratios", {"ticker": "AAPL", "period": "Q3"})
+print(ratios)
 ```
